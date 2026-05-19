@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Hub</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+  <script src="vendor/alpine.min.js" defer></script>
+</head>
+<body x-data="hubApp()" x-init="init()" x-cloak>
+
+  <!-- Inline SVG icon sprite (Lucide-derived paths, MIT) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+      <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+      <symbol id="i-arrow-left" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-rotate" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9"  x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+      <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m20 20-7-7"/><path d="m5 14 9-9 5 5-9 9-5-5z"/><path d="M9 18H4"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+      <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="hub-header" role="banner">
+    <span class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      </span>
+      <span class="brand-name">Hub</span>
+    </span>
+
+    <span class="hub-meta">
+      <span class="hub-version" x-show="version" x-text="'v' + version"></span>
+      <span class="hub-port" x-show="port" x-text="':' + port"></span>
+    </span>
+
+    <span class="hub-spacer"></span>
+
+    <button class="back-btn" x-show="!selected" @click="openSetup()" type="button" aria-label="Open settings">
+      <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
+      <span>Settings</span>
+    </button>
+
+    <button class="back-btn" x-show="selected" @click="deselect()" type="button" aria-label="Back to catalog">
+      <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+      <span>Back</span>
+    </button>
+  </header>
+
+  <!-- Toolbar (default view only) -->
+  <section class="toolbar" x-show="!selected" role="search">
+    <label class="search-box">
+      <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+      <input
+        type="search"
+        class="search-input"
+        x-model="query"
+        x-ref="searchInput"
+        placeholder="Search scripts and tools…"
+        aria-label="Search"
+        autocomplete="off"
+        spellcheck="false">
+      <button type="button" class="search-clear" x-show="query" @click="query = ''" aria-label="Clear search">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+      </button>
+      <span class="search-hint" x-show="!query" aria-hidden="true"><kbd class="kbd">/</kbd></span>
+    </label>
+
+    <div class="chip-group" role="group" aria-label="Filter by kind">
+      <button type="button" class="chip" :aria-pressed="kindFilter === 'all'" @click="kindFilter = 'all'">
+        <svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>
+        <span>All</span>
+        <span x-text="counts.all"></span>
+      </button>
+      <button type="button" class="chip" :aria-pressed="kindFilter === 'ps1'" @click="kindFilter = 'ps1'">
+        <svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>
+        <span>.ps1</span>
+        <span x-text="counts.ps1"></span>
+      </button>
+      <button type="button" class="chip" :aria-pressed="kindFilter === 'exe'" @click="kindFilter = 'exe'">
+        <svg class="icon" aria-hidden="true"><use href="#i-box"/></svg>
+        <span>.exe</span>
+        <span x-text="counts.exe"></span>
+      </button>
+      <button type="button" class="chip" :aria-pressed="kindFilter === 'cloud'" @click="kindFilter = 'cloud'" x-show="counts.cloud > 0">
+        <svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>
+        <span>Cloud</span>
+        <span x-text="counts.cloud"></span>
+      </button>
+    </div>
+
+    <button
+      type="button"
+      class="chip chip-standalone"
+      :aria-pressed="showHidden"
+      @click="showHidden = !showHidden"
+      x-show="counts.hidden > 0"
+      :title="showHidden ? 'Hide hidden items' : 'Show hidden items'">
+      <svg class="icon" aria-hidden="true"><use :href="showHidden ? '#i-eye' : '#i-eye-off'"/></svg>
+      <span x-text="showHidden ? 'Showing hidden' : 'Show hidden'"></span>
+      <span class="chip-count" x-text="counts.hidden"></span>
+    </button>
+
+    <select class="sort-select" x-model="sortBy" aria-label="Sort items">
+      <option value="name-asc">Name (A–Z)</option>
+      <option value="name-desc">Name (Z–A)</option>
+      <option value="mtime-desc">Recent first</option>
+      <option value="mtime-asc">Oldest first</option>
+      <option value="kind">Kind</option>
+    </select>
+
+    <span class="toolbar-count" x-show="loaded" x-text="filteredItems.length + ' / ' + items.length"></span>
+  </section>
+
+  <template x-if="error">
+    <div class="banner banner-error" role="alert">
+      <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+      <span x-text="error"></span>
+    </div>
+  </template>
+
+  <template x-if="warnings && warnings.length">
+    <div class="banner banner-warn" role="status">
+      <svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>
+      <div>
+        <strong>Warnings</strong>
+        <ul>
+          <template x-for="w in warnings" :key="w"><li x-text="w"></li></template>
+        </ul>
+      </div>
+    </div>
+  </template>
+
+  <main>
+
+    <!-- Loading -->
+    <template x-if="!loaded">
+      <div id="status" role="status">
+        <svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:.6"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        <span>Loading catalog…</span>
+      </div>
+    </template>
+
+    <!-- Empty (no items at all) -->
+    <template x-if="loaded && items.length === 0 && !selected">
+      <div class="empty">
+        <svg class="icon-xl"><use href="#i-inbox"/></svg>
+        <p class="empty-title">No scripts or tools found</p>
+        <p class="empty-detail">Drop a <code>.ps1</code> or <code>.exe</code> into a configured scan root to see it here.</p>
+      </div>
+    </template>
+
+    <!-- Empty (filtered) -->
+    <template x-if="loaded && items.length > 0 && filteredItems.length === 0 && !selected">
+      <div class="empty">
+        <svg class="icon-xl"><use href="#i-filter"/></svg>
+        <p class="empty-title">No matches</p>
+        <p class="empty-detail">Try a different search term or clear the kind filter.</p>
+        <button type="button" class="btn-ghost" @click="resetFilters()">
+          <svg class="icon" aria-hidden="true"><use href="#i-eraser"/></svg>
+          <span>Reset filters</span>
+        </button>
+      </div>
+    </template>
+
+    <!-- Items grid -->
+    <section class="items-grid" x-show="!selected && filteredItems.length" aria-label="Available scripts and tools">
+      <template x-for="(item, idx) in filteredItems" :key="item.id">
+        <div
+          class="item-card"
+          role="button"
+          tabindex="0"
+          :class="{ 'cloud-only': item.cloudOnly, 'is-hidden': isHidden(item) }"
+          @click="selectItem(item)"
+          @keydown.enter.prevent="selectItem(item)"
+          @keydown.space.prevent="selectItem(item)"
+          :style="'animation-delay:' + Math.min(idx * 18, 240) + 'ms'"
+          :aria-label="'Open ' + item.name + (item.cloudOnly ? ' (cloud-only)' : '') + (isHidden(item) ? ' (hidden)' : '')">
+
+          <button
+            type="button"
+            class="card-hide-btn"
+            @click.stop="toggleHidden(item)"
+            @keydown.enter.stop="toggleHidden(item)"
+            @keydown.space.stop="toggleHidden(item)"
+            :title="isHidden(item) ? 'Unhide' : 'Hide from catalog'"
+            :aria-label="isHidden(item) ? 'Unhide ' + item.name : 'Hide ' + item.name">
+            <svg class="icon" aria-hidden="true"><use :href="isHidden(item) ? '#i-eye' : '#i-eye-off'"/></svg>
+          </button>
+
+          <div class="item-card-row">
+            <span class="kind-icon" :class="'kind-' + item.kind" aria-hidden="true">
+              <svg class="icon-lg"><use :href="item.kind === 'exe' ? '#i-box' : '#i-terminal'"/></svg>
+            </span>
+            <div class="item-card-meta">
+              <span class="kind-badge" :class="'kind-' + item.kind" x-text="item.kind"></span>
+              <span class="cloud-badge" x-show="item.cloudOnly" title="Cloud-only (OneDrive) — not materialized">
+                <svg class="icon" aria-hidden="true"><use href="#i-cloud"/></svg>
+                <span>cloud</span>
+              </span>
+            </div>
+          </div>
+
+          <h2 class="item-name" x-text="item.name"></h2>
+
+          <p class="item-description" x-show="item.description" x-text="item.description" :title="item.description"></p>
+          <p class="item-description item-description-missing" x-show="!item.description">No description available.</p>
+
+          <div class="item-foot">
+            <span class="item-foot-row item-root" :title="item.root">
+              <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+              <span x-text="shortRoot(item.root)"></span>
+            </span>
+            <span class="hub-spacer"></span>
+            <span class="item-foot-row" :title="item.mtime">
+              <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>
+              <span x-text="formatMtime(item.mtime)"></span>
+            </span>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- Form pane -->
+    <template x-if="selected">
+      <section class="form-pane" aria-label="Run configuration">
+        <header class="form-pane-header">
+          <span class="kind-icon" :class="'kind-' + selected.kind" aria-hidden="true">
+            <svg><use :href="selected.kind === 'exe' ? '#i-box' : '#i-terminal'"/></svg>
+          </span>
+          <div class="form-pane-titles">
+            <h2 class="form-pane-title" x-text="selected.name"></h2>
+            <p class="form-pane-description" x-show="selected.description" x-text="selected.description"></p>
+            <p class="form-pane-path" x-text="schema?.scriptPath || selected.path"></p>
+          </div>
+        </header>
+
+        <template x-if="schemaLoading">
+          <p class="empty">Loading schema…</p>
+        </template>
+
+        <!-- Typed mode form -->
+        <template x-if="schema && schema.mode === 'typed'">
+          <form class="run-form" @submit.prevent="submit()">
+            <template x-if="schema.fields && schema.fields.length === 0">
+              <p class="form-help span-full">No parameters &mdash; press Run to execute.</p>
+            </template>
+
+            <template x-for="field in schema.fields" :key="field.name">
+              <div class="form-field" :data-widget="field.widget">
+
+                <!-- Boolean fields render as inline checkbox + label -->
+                <template x-if="field.widget === 'checkbox' || field.widget === 'checkbox-switch'">
+                  <label class="form-checkbox-wrap">
+                    <input type="checkbox" class="form-checkbox" x-model="formValues[field.name]">
+                    <span class="form-name" x-text="field.name"></span>
+                    <span class="form-type" x-text="field.type"></span>
+                  </label>
+                </template>
+
+                <!-- All other widgets render with label above input -->
+                <template x-if="field.widget !== 'checkbox' && field.widget !== 'checkbox-switch'">
+                  <label class="form-label">
+                    <span class="form-name" x-text="field.name"></span>
+                    <span class="form-type" x-text="field.type"></span>
+                    <span class="form-required" x-show="field.required" title="Required">*</span>
+                  </label>
+                </template>
+
+                <template x-if="field.widget === 'textbox'">
+                  <input type="text" class="form-input" x-model="formValues[field.name]" :placeholder="field.default ?? 'value'" :required="field.required" autocomplete="off" spellcheck="false">
+                </template>
+
+                <template x-if="field.widget === 'number'">
+                  <input type="number" class="form-input" x-model.number="formValues[field.name]" :required="field.required">
+                </template>
+
+                <template x-if="field.widget === 'dropdown'">
+                  <select class="form-input" x-model="formValues[field.name]" :required="field.required">
+                    <option value="" disabled>— select —</option>
+                    <template x-for="opt in (field.options || [])" :key="opt">
+                      <option :value="opt" x-text="opt"></option>
+                    </template>
+                  </select>
+                </template>
+
+                <template x-if="field.widget === 'textarea-multi'">
+                  <textarea class="form-input form-textarea" x-model="formValues[field.name]" placeholder="One value per line" spellcheck="false"></textarea>
+                </template>
+
+                <template x-if="field.widget === 'file'">
+                  <input type="file" class="form-input" @change="formValues[field.name] = $event.target.files[0]?.name || ''">
+                </template>
+
+                <p class="form-help" x-show="field.help" x-text="field.help"></p>
+              </div>
+            </template>
+          </form>
+        </template>
+
+        <!-- Raw mode form -->
+        <template x-if="schema && schema.mode === 'raw'">
+          <form class="run-form raw" @submit.prevent="submit()">
+            <p class="raw-mode-note">
+              <svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>
+              <span>
+                <strong>Raw mode</strong> &mdash;
+                <span x-text="schema.reason || (schema.kind === 'exe' ? 'compiled executable (no AST introspection)' : 'no typed schema available')"></span>.
+                Type arguments exactly as on the command line.
+              </span>
+            </p>
+            <div class="form-field span-full">
+              <label class="form-label"><span class="form-name">Arguments</span></label>
+              <textarea class="form-input form-textarea" x-model="formValues.__rawArgs" placeholder="-Foo bar -Switch" spellcheck="false" autofocus></textarea>
+            </div>
+          </form>
+        </template>
+
+        <!-- Actions -->
+        <div class="form-actions">
+          <button type="button" class="btn-primary" @click="submit()" :disabled="!isFormValid() || submitting">
+            <template x-if="!submitting">
+              <svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>
+            </template>
+            <template x-if="submitting && !ended">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:pulse 1.2s ease-in-out infinite"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </template>
+            <template x-if="ended">
+              <svg class="icon" aria-hidden="true"><use href="#i-rotate"/></svg>
+            </template>
+            <span x-show="!submitting">Run</span>
+            <span x-show="submitting && !ended">Running…</span>
+            <span x-show="ended">Run again</span>
+          </button>
+
+          <button type="button" class="btn-danger" @click="kill()" x-show="submitting && !ended">
+            <svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>
+            <span>Kill</span>
+          </button>
+
+          <button type="button" class="btn-ghost" @click="clearLog()" x-show="logLines.length && !submitting">
+            <svg class="icon" aria-hidden="true"><use href="#i-eraser"/></svg>
+            <span>Clear log</span>
+          </button>
+
+          <span class="form-disabled-hint" x-show="!isFormValid() && !submitting">
+            <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+            <span>Fill required fields first</span>
+          </span>
+
+          <span class="exit-info" x-show="ended">
+            <span class="exit-code" :class="exitCode === 0 ? 'exit-ok' : 'exit-fail'">
+              <svg class="icon" aria-hidden="true"><use :href="exitCode === 0 ? '#i-check' : '#i-x'"/></svg>
+              <span x-text="'exit ' + exitCode"></span>
+            </span>
+            <span class="status-tag" x-text="endStatus"></span>
+          </span>
+        </div>
+
+        <!-- Log pane -->
+        <section class="log-section" x-show="currentJob || logLines.length" aria-label="Output log">
+          <div class="log-header">
+            <span class="log-title">
+              <span class="log-pulse" x-show="submitting && !ended" aria-hidden="true"></span>
+              <svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>
+              <span>Output</span>
+            </span>
+            <span class="log-meta">
+              <span x-show="logLines.length" x-text="logLines.length + ' line' + (logLines.length === 1 ? '' : 's')"></span>
+              <button type="button" class="log-meta-btn" :aria-pressed="autoScroll" @click="autoScroll = !autoScroll" title="Auto-scroll to bottom">
+                <svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg>
+                <span>Follow</span>
+              </button>
+            </span>
+          </div>
+          <pre class="log-pane" x-ref="logPane">
+            <template x-for="(entry, idx) in logLines" :key="idx"><span :class="'log-line log-' + entry.stream" x-text="entry.line + '\n'"></span></template>
+            <template x-if="!logLines.length"><span class="log-empty">Waiting for output…</span></template>
+          </pre>
+        </section>
+      </section>
+    </template>
+
+  </main>
+
+  <!-- Setup modal -->
+  <template x-if="setupOpen">
+    <div class="modal-backdrop" @click.self="closeSetup()" role="dialog" aria-modal="true" aria-label="Hub setup">
+      <div class="modal">
+        <header class="modal-header">
+          <svg class="icon-lg" aria-hidden="true"><use href="#i-settings"/></svg>
+          <h2 class="modal-title">Configure scan folders</h2>
+        </header>
+
+        <p class="modal-intro">
+          Hub watches these folders and lists every <code>.ps1</code> and <code>.exe</code> it finds (one level deep).
+          You can add up to <span x-text="config.maxScanRoots || 16"></span> folders.
+        </p>
+
+        <template x-if="setupError">
+          <div class="banner banner-error" role="alert" style="margin: 0 0 var(--r-3);">
+            <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+            <span x-text="setupError"></span>
+          </div>
+        </template>
+
+        <div class="setup-rows">
+          <template x-for="(_, idx) in setupScanRoots" :key="idx">
+            <div class="setup-row">
+              <input
+                type="text"
+                class="form-input"
+                x-model="setupScanRoots[idx]"
+                placeholder="C:\path\to\scripts"
+                spellcheck="false"
+                autocomplete="off">
+              <button type="button" class="btn-ghost setup-row-btn" @click="setupBrowseFolder(idx)" :disabled="setupSaving" title="Browse for folder" aria-label="Browse for folder">
+                <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+              </button>
+              <button type="button" class="btn-ghost setup-row-btn" @click="setupRemoveRow(idx)" :disabled="setupSaving || setupScanRoots.length <= 1" title="Remove folder" aria-label="Remove folder">
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <button
+          type="button"
+          class="btn-ghost setup-add-btn"
+          @click="setupAddRow()"
+          :disabled="setupSaving || setupScanRoots.length >= (config.maxScanRoots || 16)">
+          <svg class="icon" aria-hidden="true"><use href="#i-folder-plus"/></svg>
+          <span>Add folder</span>
+        </button>
+
+        <p class="modal-defaults">
+          Defaults: <template x-for="d in config.defaults" :key="d"><code x-text="d" style="margin-right:6px;"></code></template>
+        </p>
+
+        <footer class="modal-footer">
+          <button type="button" class="btn-ghost" @click="closeSetup()" :disabled="setupSaving">Cancel</button>
+          <button type="button" class="btn-primary" @click="setupSave()" :disabled="setupSaving || setupScanRoots.length === 0">
+            <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
+            <span x-show="!setupSaving">Save</span>
+            <span x-show="setupSaving">Saving…</span>
+          </button>
+        </footer>
+      </div>
+    </div>
+  </template>
+</body>
+</html>

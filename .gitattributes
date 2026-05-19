@@ -1,0 +1,18 @@
+# Auto-detect text + normalize on commit; native line endings in working tree.
+* text=auto
+
+# Windows-native shell scripts keep CRLF on checkout
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Force LF for web assets (browsers + servers prefer LF)
+*.html text eol=lf
+*.css  text eol=lf
+*.js   text eol=lf
+
+# Binaries
+*.exe binary
+*.ico binary
+*.png binary
+*.zip binary

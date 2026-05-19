@@ -1,0 +1,25 @@
+# Runtime / temp
+hub-error.log
+hub.port
+*.tmp
+*.bak
+
+# OS / IDE
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Build artifacts (Hub.exe itself IS tracked; rebuild byproducts are not)
+*.pdb
+
+# Rune dir is local-only (planning docs + transient state)
+.rune/
+
+# AI session handoff (local dev notes)
+HANDOFF.md
+
+# Installer planning docs (local — describe scrub spec)
+docs/plans/hub-installer.md

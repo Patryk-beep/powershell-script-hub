@@ -1,5 +1,10 @@
 # Hub — Script & Tool Dashboard
 
+[![Release](https://img.shields.io/github/v/release/Patryk-beep/powershell-script-hub?display_name=tag&sort=semver)](https://github.com/Patryk-beep/powershell-script-hub/releases)
+[![License](https://img.shields.io/github/license/Patryk-beep/powershell-script-hub)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://github.com/Patryk-beep/powershell-script-hub)
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%2F%207-5391FE?logo=powershell&logoColor=white)](https://learn.microsoft.com/powershell/)
+
 A local web dashboard that auto-discovers PowerShell scripts (`.ps1`) and tools (`.exe`) in folders you configure, renders them as a clickable grid, generates input forms from each script's `param()` block, and runs them with live log streaming.
 
 - **Localhost-only** — binds to `127.0.0.1`, never accessible from the network.
@@ -185,4 +190,4 @@ Install-Module ps2exe -Scope CurrentUser
 
 ## License
 
-MIT. See `LICENSE` (TODO).
+MIT. See [LICENSE](LICENSE).

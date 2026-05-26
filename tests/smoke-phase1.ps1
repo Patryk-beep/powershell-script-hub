@@ -122,7 +122,7 @@ try {
 
     $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing -TimeoutSec 5
     if ($r.StatusCode -ne 200) { Write-Fail "Root status was $($r.StatusCode), expected 200" }
-    elseif ($r.Content -notmatch 'Hub — loading…') { Write-Fail "Root body missing 'Hub — loading…'" }
+    elseif ($r.Content -notmatch 'Loading catalog') { Write-Fail "Root body missing loading placeholder 'Loading catalog'" }
     else { Write-Pass "GET / returned 200 with expected content" }
 
     $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/app.js' -UseBasicParsing -TimeoutSec 5
@@ -225,10 +225,10 @@ try {
     if ($r.Status -eq 403 -and $r.Body -match 'csrf') { Write-Pass "POST with mismatched CSRF -> 403 csrf" }
     else { Write-Fail "POST with mismatched CSRF -> $($r.Status). Body: $($r.Body)" }
 
-    # (g) GET /api/items with valid Origin passes middleware (Phase 1 returns 503 because items not yet implemented)
+    # (g) GET /api/items with valid Origin passes middleware (returns 200 + JSON since P2 shipped — assertion updated post-P2).
     $r = Send-RawHttp -RequestLine 'GET /api/items HTTP/1.1' -Headers @{ 'Origin'='http://127.0.0.1:8765' }
-    if ($r.Status -eq 503) { Write-Pass "GET /api/items passes middleware (503 = not-yet-implemented, expected for Phase 1)" }
-    else { Write-Fail "GET /api/items -> $($r.Status), expected 503 (P2 stub). Body: $($r.Body)" }
+    if ($r.Status -eq 200 -and $r.Body -match '"items"') { Write-Pass "GET /api/items passes middleware (200 + JSON)" }
+    else { Write-Fail "GET /api/items -> $($r.Status). Body excerpt: $(($r.Body)[0..120] -join '')" }
 
 } finally {
     Stop-Hub

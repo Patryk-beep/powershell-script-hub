@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$Script:Version          = '1.1.0.0'
+$Script:Version          = '1.4.13.0'
 $Script:Port             = 8765
 $Script:Listener         = $null
 $Script:ListenerHealthy  = $true
@@ -150,6 +150,8 @@ function Get-MimeType {
         '\.png$'   { 'image/png'; break }
         '\.ico$'   { 'image/x-icon'; break }
         '\.txt$'   { 'text/plain; charset=utf-8'; break }
+        '\.woff2$' { 'font/woff2'; break }
+        '\.woff$'  { 'font/woff'; break }
         default    { 'application/octet-stream' }
     }
 }
@@ -280,6 +282,85 @@ function Invoke-StaticFileRoute {
     $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
 }
 
+function Read-ScriptAst {
+    # Parse a .ps1 with explicit UTF-8 decoding + BOM detection. PS5 (Hub.exe runtime)
+    # otherwise defaults to the system codepage and mis-decodes UTF-8 multi-byte glyphs
+    # (e.g. ✓ ✗) as garbage, producing spurious parse-errors that fall through to raw mode.
+    # Returns @{ ast; tokens; errors } — ast is $null on hard read failure.
+    [OutputType([hashtable])]
+    param([string]$Path)
+    $out = @{ ast = $null; tokens = $null; errors = @() }
+    $reader = $null
+    try {
+        # StreamReader with detectEncodingFromByteOrderMarks=$true honours UTF-8 / UTF-16 / UTF-32 BOMs;
+        # falls back to the supplied encoding (UTF-8) when no BOM is present.
+        $reader = New-Object System.IO.StreamReader($Path, [System.Text.Encoding]::UTF8, $true)
+        $text = $reader.ReadToEnd()
+    } catch {
+        Write-HubError $_
+        return $out
+    } finally {
+        if ($null -ne $reader) { try { $reader.Dispose() } catch { } }
+    }
+    try {
+        $tokens = $null; $errors = $null
+        $out.ast    = [System.Management.Automation.Language.Parser]::ParseInput(
+            $text, $Path, [ref]$tokens, [ref]$errors)
+        $out.tokens = $tokens
+        $out.errors = $errors
+    } catch {
+        Write-HubError $_
+    }
+    return $out
+}
+
+function Get-HubCacheDir {
+    [OutputType([string])]
+    param()
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'HubFallback')
+    }
+    $dir = Join-Path $base 'Hub'
+    if (-not [System.IO.Directory]::Exists($dir)) {
+        try { New-Item -ItemType Directory -Path $dir -Force | Out-Null } catch { Write-HubError $_ }
+    }
+    return $dir
+}
+
+function Get-SchemaCache {
+    [OutputType([hashtable])]
+    param()
+    $path = Join-Path (Get-HubCacheDir) 'schema-cache.json'
+    if (-not [System.IO.File]::Exists($path)) { return @{} }
+    try {
+        $raw = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @{} }
+        $obj = $raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($null -eq $obj) { return @{} }
+        return $obj
+    } catch {
+        Write-HubError $_
+        return @{}
+    }
+}
+
+function Save-SchemaCache {
+    param([hashtable]$Cache)
+    if ($null -eq $Cache) { return }
+    $dir  = Get-HubCacheDir
+    $path = Join-Path $dir 'schema-cache.json'
+    $tmp  = $path + '.tmp'
+    try {
+        $json = $Cache | ConvertTo-Json -Depth 8 -Compress
+        [System.IO.File]::WriteAllText($tmp, $json, [System.Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $tmp -Destination $path -Force
+    } catch {
+        Write-HubError $_
+        try { if ([System.IO.File]::Exists($tmp)) { [System.IO.File]::Delete($tmp) } } catch { }
+    }
+}
+
 function Get-ItemDescription {
     # Returns a single-line description for a .ps1 or .exe item.
     #   .ps1 → AST GetHelpContent().Synopsis (no script execution)
@@ -289,9 +370,8 @@ function Get-ItemDescription {
     param([string]$Path, [string]$Kind)
     try {
         if ($Kind -eq 'ps1') {
-            $tokens = $null; $errors = $null
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-                $Path, [ref]$tokens, [ref]$errors)
+            $parsed = Read-ScriptAst -Path $Path
+            $ast = $parsed.ast
             if ($null -eq $ast) { return '' }
             $help = $ast.GetHelpContent()
             if ($help -and $help.Synopsis) {
@@ -450,7 +530,19 @@ function Get-HubItems {
     param()
     $items    = New-Object 'System.Collections.Generic.List[hashtable]'
     $warnings = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($root in (Get-EffectiveScanRoots)) {
+
+    # Schema cache (advisory): keyed by full path → @{ mtime; size; description; paramPreview; schemaMode }.
+    $cache     = Get-SchemaCache
+    $nextCache = @{}
+
+    # Build a lookup of scan-root prefixes for defence-in-depth verification (ADV-C1).
+    $scanRoots = @(Get-EffectiveScanRoots)
+    $rootNorms = @()
+    foreach ($r in $scanRoots) {
+        try { $rootNorms += ([System.IO.Path]::GetFullPath($r)) } catch { Write-HubError $_ }
+    }
+
+    foreach ($root in $scanRoots) {
         if (-not [System.IO.Directory]::Exists($root)) {
             $warnings.Add("Scan root unavailable: $root")
             continue
@@ -494,20 +586,77 @@ function Get-HubItems {
                     $cloudOnly = (($attrs -band 0x00400000) -ne 0) -or (($attrs -band 0x00040000) -ne 0)
                     $mtime = [System.IO.File]::GetLastWriteTimeUtc($path)
                     $kind = $ext.TrimStart('.')
-                    # Skip AST parse / FileVersionInfo for OneDrive ghost files —
-                    # accessing content would materialize them.
-                    $desc = if ($cloudOnly) { '' } else { Get-ItemDescription -Path $path -Kind $kind }
+
+                    # Defence in depth — re-confirm path is under a current scan root (cache may be stale).
+                    $resolved = [System.IO.Path]::GetFullPath($path)
+                    $underRoot = $false
+                    foreach ($rn in $rootNorms) {
+                        if ($resolved.StartsWith($rn, [System.StringComparison]::OrdinalIgnoreCase)) {
+                            $underRoot = $true; break
+                        }
+                    }
+                    if (-not $underRoot) {
+                        $warnings.Add("Skipped (not under scan root): $path")
+                        continue
+                    }
+
+                    # Cache key: path + mtime ticks + size. Hit ⇒ reuse description/preview/schemaMode.
+                    $size = 0
+                    try { $size = (Get-Item -LiteralPath $path -Force).Length } catch { }
+                    $mtimeTicks = $mtime.Ticks
+                    $cacheKey   = $path
+                    $cached     = $null
+                    if ($cache.ContainsKey($cacheKey)) {
+                        $candidate = $cache[$cacheKey]
+                        if ($null -ne $candidate -and
+                            $candidate.ContainsKey('mtimeTicks') -and
+                            $candidate.ContainsKey('size') -and
+                            [int64]$candidate.mtimeTicks -eq $mtimeTicks -and
+                            [int64]$candidate.size -eq $size) {
+                            $cached = $candidate
+                        }
+                    }
+
+                    if ($cloudOnly) {
+                        # OneDrive ghost: never parse.
+                        $desc         = ''
+                        $paramPreview = $null
+                        $schemaMode   = 'raw'
+                    } elseif ($cached) {
+                        $desc         = [string]$cached.description
+                        $paramPreview = $cached.paramPreview
+                        $schemaMode   = [string]$cached.schemaMode
+                    } else {
+                        $meta = Get-ItemMetadata -Path $path -Kind $kind -CloudOnly:$false
+                        $desc         = $meta.description
+                        $paramPreview = $meta.paramPreview
+                        $schemaMode   = $meta.schemaMode
+                    }
+
                     $items.Add(@{
-                        id          = ConvertTo-StableId -Path $path
-                        name        = [System.IO.Path]::GetFileNameWithoutExtension($path)
-                        kind        = $kind
-                        path        = $path
+                        id           = ConvertTo-StableId -Path $path
+                        name         = [System.IO.Path]::GetFileNameWithoutExtension($path)
+                        kind         = $kind
+                        path         = $path
                         # Containing directory (depth-1 friendly), not scan root.
-                        root        = [System.IO.Path]::GetDirectoryName($path)
-                        mtime       = $mtime.ToString('o')
-                        cloudOnly   = $cloudOnly
-                        description = $desc
+                        root         = [System.IO.Path]::GetDirectoryName($path)
+                        mtime        = $mtime.ToString('o')
+                        cloudOnly    = $cloudOnly
+                        description  = $desc
+                        paramPreview = $paramPreview
+                        schemaMode   = $schemaMode
                     })
+
+                    # Cache only non-cloud items (cloud has nothing to cache).
+                    if (-not $cloudOnly) {
+                        $nextCache[$cacheKey] = @{
+                            mtimeTicks   = $mtimeTicks
+                            size         = $size
+                            description  = $desc
+                            paramPreview = $paramPreview
+                            schemaMode   = $schemaMode
+                        }
+                    }
                 } catch {
                     Write-HubError $_
                     continue
@@ -515,6 +664,10 @@ function Get-HubItems {
             }
         }
     }
+
+    # Persist cache (best-effort).
+    Save-SchemaCache -Cache $nextCache
+
     $sorted = $items | Sort-Object -Property @{Expression = { $_.name.ToLowerInvariant() }}
     return @{ items = @($sorted); warnings = @($warnings) }
 }
@@ -534,17 +687,55 @@ function Invoke-ItemsRoute {
     }
 }
 
+function Get-ParamHelpFromComments {
+    # Extracts comment-based help .PARAMETER entries. Returns hashtable keyed by lowercase name.
+    [OutputType([hashtable])]
+    param([System.Management.Automation.Language.ScriptBlockAst]$Ast)
+    $out = @{}
+    if ($null -eq $Ast) { return $out }
+    try {
+        $help = $Ast.GetHelpContent()
+        if ($help -and $help.Parameters) {
+            foreach ($k in $help.Parameters.Keys) {
+                $v = $help.Parameters[$k]
+                if ($null -ne $v) {
+                    $out[$k.ToLowerInvariant()] = ($v -replace '\s+', ' ').Trim()
+                }
+            }
+        }
+    } catch {
+        Write-HubError $_
+    }
+    return $out
+}
+
 function ConvertTo-WidgetSpec {
     [OutputType([hashtable])]
-    param([System.Management.Automation.Language.ParameterAst]$ParamAst)
+    param(
+        [System.Management.Automation.Language.ParameterAst]$ParamAst,
+        [hashtable]$CommentHelp = $null
+    )
 
     $spec = @{
-        name     = $ParamAst.Name.VariablePath.UserPath
-        widget   = 'textbox'
-        type     = 'string'
-        required = $false
-        default  = $null
-        help     = $null
+        name         = $ParamAst.Name.VariablePath.UserPath
+        widget       = 'textbox'
+        type         = 'string'
+        required     = $false
+        default      = $null
+        help         = $null
+        aliases      = @()
+        position     = $null
+        parameterSet = '__AllParameterSets'
+        allowEmpty   = $false
+        options      = $null
+        min          = $null
+        max          = $null
+        step         = $null
+        pattern      = $null
+        minlength    = $null
+        maxlength    = $null
+        countMin     = $null
+        countMax     = $null
     }
 
     if ($ParamAst.DefaultValue) {
@@ -592,6 +783,18 @@ function ConvertTo-WidgetSpec {
                                 $spec.help = $named.Argument.Value
                             }
                         }
+                        'Position' {
+                            try {
+                                if ($named.Argument -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                                    $spec.position = [int]$named.Argument.Value
+                                }
+                            } catch { Write-HubError $_ }
+                        }
+                        'ParameterSetName' {
+                            if ($named.Argument -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                                $spec.parameterSet = $named.Argument.Value
+                            }
+                        }
                     }
                 }
             } elseif ($aname -eq 'ValidateSet' -or $aname -eq 'ValidateSetAttribute') {
@@ -607,23 +810,123 @@ function ConvertTo-WidgetSpec {
                     $spec.widget  = 'dropdown'
                     $spec.options = $vals
                 }
+            } elseif ($aname -eq 'ValidateRange' -or $aname -eq 'ValidateRangeAttribute') {
+                try {
+                    if ($attr.PositionalArguments.Count -ge 2) {
+                        $a0 = $attr.PositionalArguments[0]
+                        $a1 = $attr.PositionalArguments[1]
+                        if ($a0 -is [System.Management.Automation.Language.ConstantExpressionAst] -and
+                            $a1 -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                            $spec.min = $a0.Value
+                            $spec.max = $a1.Value
+                        }
+                    }
+                } catch { Write-HubError $_ }
+            } elseif ($aname -eq 'ValidatePattern' -or $aname -eq 'ValidatePatternAttribute') {
+                try {
+                    if ($attr.PositionalArguments.Count -ge 1 -and
+                        $attr.PositionalArguments[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                        $spec.pattern = $attr.PositionalArguments[0].Value
+                    }
+                } catch { Write-HubError $_ }
+            } elseif ($aname -eq 'ValidateLength' -or $aname -eq 'ValidateLengthAttribute') {
+                try {
+                    if ($attr.PositionalArguments.Count -ge 2 -and
+                        $attr.PositionalArguments[0] -is [System.Management.Automation.Language.ConstantExpressionAst] -and
+                        $attr.PositionalArguments[1] -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                        $spec.minlength = [int]$attr.PositionalArguments[0].Value
+                        $spec.maxlength = [int]$attr.PositionalArguments[1].Value
+                    }
+                } catch { Write-HubError $_ }
+            } elseif ($aname -eq 'ValidateCount' -or $aname -eq 'ValidateCountAttribute') {
+                try {
+                    if ($attr.PositionalArguments.Count -ge 2 -and
+                        $attr.PositionalArguments[0] -is [System.Management.Automation.Language.ConstantExpressionAst] -and
+                        $attr.PositionalArguments[1] -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                        $spec.countMin = [int]$attr.PositionalArguments[0].Value
+                        $spec.countMax = [int]$attr.PositionalArguments[1].Value
+                    }
+                } catch { Write-HubError $_ }
+            } elseif ($aname -eq 'ValidateNotNullOrEmpty' -or $aname -eq 'ValidateNotNullOrEmptyAttribute' -or
+                      $aname -eq 'ValidateNotNull' -or $aname -eq 'ValidateNotNullAttribute') {
+                $spec.required = $true
+            } elseif ($aname -eq 'ValidateScript' -or $aname -eq 'ValidateScriptAttribute') {
+                $note = 'Custom validation runs server-side.'
+                if ([string]::IsNullOrEmpty($spec.help)) { $spec.help = $note }
+                else { $spec.help = "$($spec.help) $note" }
+            } elseif ($aname -eq 'Alias' -or $aname -eq 'AliasAttribute') {
+                $als = @()
+                foreach ($pa in $attr.PositionalArguments) {
+                    if ($pa -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                        $als += $pa.Value
+                    }
+                }
+                if ($als.Count -gt 0) { $spec.aliases = $als }
+            } elseif ($aname -eq 'AllowNull' -or $aname -eq 'AllowNullAttribute' -or
+                      $aname -eq 'AllowEmptyString' -or $aname -eq 'AllowEmptyStringAttribute' -or
+                      $aname -eq 'AllowEmptyCollection' -or $aname -eq 'AllowEmptyCollectionAttribute') {
+                $spec.allowEmpty = $true
             }
         }
     }
 
     if ($typeName) {
-        $tnLow = $typeName.ToLowerInvariant()
+        # Normalize: strip namespace (e.g. System.Guid → guid). Brackets stay so array types match.
+        $bare = $typeName
+        $lastDot = $bare.LastIndexOf('.')
+        if ($lastDot -ge 0 -and -not $bare.StartsWith('System.IO.', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $bare = $bare.Substring($lastDot + 1)
+        }
+        $tnLow = $bare.ToLowerInvariant()
         $spec.type = $tnLow
         if ($spec.widget -ne 'dropdown') {
             switch -Regex ($tnLow) {
-                '^string$'                          { $spec.widget = 'textbox';        break }
-                '^(int|int32|int64|long|uint32)$'   { $spec.widget = 'number';         break }
-                '^(bool|boolean)$'                  { $spec.widget = 'checkbox';       break }
-                '^(switch|switchparameter)$'        { $spec.widget = 'checkbox-switch'; break }
-                '^(string\[\]|int\[\])$'            { $spec.widget = 'textarea-multi'; break }
-                '^(system\.io\.fileinfo|fileinfo)$' { $spec.widget = 'file';           break }
-                default                             { $spec.widget = 'textbox' }
+                '^string$'                                 { $spec.widget = 'textbox';         break }
+                '^(int|int32|int64|long|uint32)$'          { $spec.widget = 'number';          break }
+                '^(double|decimal|float|single)$'          { $spec.widget = 'number'; $spec.step = 'any'; break }
+                '^(bool|boolean)$'                         { $spec.widget = 'checkbox';        break }
+                '^(switch|switchparameter)$'               { $spec.widget = 'checkbox-switch'; break }
+                '^datetime$'                               { $spec.widget = 'datetime-local';  break }
+                '^guid$'                                   {
+                    $spec.widget = 'textbox'
+                    if ([string]::IsNullOrEmpty($spec.pattern)) {
+                        $spec.pattern = '^[0-9a-fA-F-]{36}$'
+                    }
+                    break
+                }
+                '^uri$'                                    { $spec.widget = 'url';             break }
+                '^(securestring|pscredential)$'            {
+                    $spec.widget = 'password'
+                    $note = 'Sent over loopback as plain string. Not stored.'
+                    if ([string]::IsNullOrEmpty($spec.help)) { $spec.help = $note }
+                    break
+                }
+                '^(string\[\]|int\[\]|object\[\]|double\[\]|bool\[\]|switch\[\])$' {
+                    $spec.widget = 'textarea-multi'; break
+                }
+                '^hashtable$'                              {
+                    $spec.widget = 'textarea-multi'
+                    $note = 'One key=value per line.'
+                    if ([string]::IsNullOrEmpty($spec.help)) { $spec.help = $note }
+                    break
+                }
+                '^(system\.io\.fileinfo|fileinfo)$'        { $spec.widget = 'file';            break }
+                '^scriptblock$'                            {
+                    $spec.widget = 'unsupported'
+                    $note = 'ScriptBlock parameters not editable in typed mode.'
+                    if ([string]::IsNullOrEmpty($spec.help)) { $spec.help = $note }
+                    break
+                }
+                default                                    { $spec.widget = 'textbox' }
             }
+        }
+    }
+
+    # Comment-based help fallback when no [Parameter(HelpMessage=...)] attribute set it.
+    if ([string]::IsNullOrEmpty($spec.help) -and $CommentHelp) {
+        $key = $spec.name.ToLowerInvariant()
+        if ($CommentHelp.ContainsKey($key)) {
+            $spec.help = $CommentHelp[$key]
         }
     }
 
@@ -636,23 +939,22 @@ function Get-ParamSchema {
 
     $ext = [System.IO.Path]::GetExtension($ScriptPath).ToLowerInvariant()
     if ($ext -eq '.exe') {
-        return @{ mode = 'raw'; fields = @(); kind = 'exe' }
+        return @{ mode = 'raw'; schemaMode = 'raw'; fields = @(); kind = 'exe' }
     }
     if ($ext -ne '.ps1') {
-        return @{ mode = 'raw'; fields = @(); kind = 'unknown' }
+        return @{ mode = 'raw'; schemaMode = 'raw'; fields = @(); kind = 'unknown' }
     }
 
-    $errors = $null
-    $ast = $null
-    try {
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-            $ScriptPath, [ref]$null, [ref]$errors)
-    } catch {
-        Write-HubError $_
-        return @{ mode = 'raw'; fields = @(); reason = 'parse-failed' }
+    $parsed = Read-ScriptAst -Path $ScriptPath
+    $ast    = $parsed.ast
+    $errors = $parsed.errors
+    if ($null -eq $ast) {
+        return @{ mode = 'raw'; schemaMode = 'raw'; fields = @(); reason = 'parse-failed' }
     }
     if ($errors -and $errors.Count -gt 0) {
-        return @{ mode = 'raw'; fields = @(); reason = 'parse-errors' }
+        # Surface the first parse error to the log so future "raw mode" mysteries are diagnosable.
+        try { Write-HubError ("Parse error in {0} L{1}: {2}" -f $ScriptPath, $errors[0].Extent.StartLineNumber, $errors[0].Message) } catch { }
+        return @{ mode = 'raw'; schemaMode = 'raw'; fields = @(); reason = 'parse-errors' }
     }
 
     $paramBlock = $ast.FindAll(
@@ -660,19 +962,191 @@ function Get-ParamSchema {
         $false) | Select-Object -First 1
 
     if (-not $paramBlock -or $paramBlock.Parameters.Count -eq 0) {
-        return @{ mode = 'raw'; fields = @(); reason = 'no-param-block' }
+        return @{ mode = 'raw'; schemaMode = 'raw'; fields = @(); reason = 'no-param-block' }
     }
+
+    $commentHelp = Get-ParamHelpFromComments -Ast $ast
 
     $fields = New-Object 'System.Collections.Generic.List[hashtable]'
     foreach ($p in $paramBlock.Parameters) {
         try {
-            $fields.Add( (ConvertTo-WidgetSpec -ParamAst $p) )
+            $fields.Add( (ConvertTo-WidgetSpec -ParamAst $p -CommentHelp $commentHelp) )
         } catch {
             Write-HubError $_
             # Skip this field; continue rest
         }
     }
-    return @{ mode = 'typed'; fields = @($fields) }
+
+    # schemaMode: 'typed' (no unsupported widgets), 'partial' (mix), 'raw' (required unsupported → caller falls back to raw).
+    $schemaMode = 'typed'
+    $hasUnsupported = $false
+    $hasRequiredUnsupported = $false
+    foreach ($f in $fields) {
+        if ($f.widget -eq 'unsupported') {
+            $hasUnsupported = $true
+            if ($f.required) { $hasRequiredUnsupported = $true }
+        }
+    }
+    if ($hasRequiredUnsupported) { $schemaMode = 'raw' }
+    elseif ($hasUnsupported)     { $schemaMode = 'partial' }
+
+    return @{ mode = 'typed'; schemaMode = $schemaMode; fields = @($fields) }
+}
+
+function Get-ParamPreview {
+    # Slim per-card preview derived from an already-parsed AST.
+    # Returns $null when no ParamBlockAst. Otherwise a hashtable with count / requiredCount / typeTags / parameterSets.
+    [OutputType([object])]
+    param([System.Management.Automation.Language.ScriptBlockAst]$Ast)
+
+    if ($null -eq $Ast) { return $null }
+
+    $paramBlock = $Ast.FindAll(
+        { param($x) $x -is [System.Management.Automation.Language.ParamBlockAst] },
+        $false) | Select-Object -First 1
+    if (-not $paramBlock) { return $null }
+
+    $params = @($paramBlock.Parameters)
+    if ($params.Count -eq 0) {
+        return @{ count = 0; requiredCount = 0; typeTags = @(); parameterSets = 0 }
+    }
+
+    # Build a quick lookup of (name → widget) by running each through ConvertTo-WidgetSpec.
+    # This is the canonical mapping and stays in sync with the schema endpoint automatically.
+    $tagFromWidget = @{
+        'textbox'          = 'string'
+        'number'           = 'number'
+        'checkbox'         = 'bool'
+        'checkbox-switch'  = 'switch'
+        'dropdown'         = 'dropdown'
+        'textarea-multi'   = 'multi'
+        'file'             = 'file'
+        'password'         = 'password'
+        'datetime-local'   = 'datetime'
+        'url'              = 'url'
+        'unsupported'      = 'unsupported'
+    }
+
+    $count = $params.Count
+    $requiredCount = 0
+    $sets = New-Object 'System.Collections.Generic.HashSet[string]'
+    $tagFreq = @{}
+    $requiredTags = New-Object 'System.Collections.Generic.HashSet[string]'
+
+    foreach ($p in $params) {
+        try {
+            $spec = ConvertTo-WidgetSpec -ParamAst $p
+            if ($spec.required) { $requiredCount++ }
+            if ($spec.parameterSet -and $spec.parameterSet -ne '__AllParameterSets') {
+                [void]$sets.Add($spec.parameterSet)
+            }
+            # Tag derivation — prefer hashtable / guid special-cases when type matches, else widget map.
+            $tag = $null
+            if ($spec.type -eq 'hashtable')                  { $tag = 'hashtable' }
+            elseif ($spec.type -eq 'guid')                   { $tag = 'guid' }
+            elseif ($tagFromWidget.ContainsKey($spec.widget)) { $tag = $tagFromWidget[$spec.widget] }
+            else                                              { $tag = 'other' }
+            if (-not $tagFreq.ContainsKey($tag)) { $tagFreq[$tag] = 0 }
+            $tagFreq[$tag]++
+            if ($spec.required) { [void]$requiredTags.Add($tag) }
+        } catch {
+            Write-HubError $_
+        }
+    }
+
+    # Build ordered tag list: required-first, then by frequency desc, then alpha. Slice top 4.
+    $allTags = @($tagFreq.Keys)
+    $sorted = $allTags | Sort-Object @{
+        Expression = {
+            $isReq = if ($requiredTags.Contains($_)) { 0 } else { 1 }
+            "$isReq|$([int]::MaxValue - $tagFreq[$_])|$_"
+        }
+    }
+    $top4 = @($sorted | Select-Object -First 4)
+
+    return @{
+        count          = $count
+        requiredCount  = $requiredCount
+        typeTags       = $top4
+        parameterSets  = $sets.Count
+    }
+}
+
+function Get-ItemMetadata {
+    # Single-pass AST: returns @{ description; paramPreview; schemaMode } for a .ps1
+    # or .exe item. cloudOnly items skip parse entirely.
+    [OutputType([hashtable])]
+    param([string]$Path, [string]$Kind, [bool]$CloudOnly)
+
+    $out = @{
+        description  = ''
+        paramPreview = $null
+        schemaMode   = 'raw'
+    }
+
+    if ($CloudOnly) { return $out }
+
+    if ($Kind -eq 'exe') {
+        $out.description = Get-ItemDescription -Path $Path -Kind 'exe'
+        return $out
+    }
+    if ($Kind -ne 'ps1') { return $out }
+
+    $parsed = Read-ScriptAst -Path $Path
+    $ast    = $parsed.ast
+    $errors = $parsed.errors
+    if ($null -eq $ast) { return $out }
+
+    # Description — synopsis from comment-based help.
+    try {
+        $help = $ast.GetHelpContent()
+        if ($help -and $help.Synopsis) {
+            $line = ($help.Synopsis -replace '\s+', ' ').Trim()
+            if ($line.Length -gt 280) { $line = $line.Substring(0, 277) + '…' }
+            $out.description = $line
+        }
+    } catch {
+        Write-HubError $_
+    }
+
+    if ($errors -and $errors.Count -gt 0) {
+        # Parse errors — description may still be useful; preview/schemaMode stay 'raw'.
+        try { Write-HubError ("Parse error in {0} L{1}: {2}" -f $Path, $errors[0].Extent.StartLineNumber, $errors[0].Message) } catch { }
+        return $out
+    }
+
+    # paramPreview + schemaMode (typed/partial/raw) from the same AST.
+    try {
+        $preview = Get-ParamPreview -Ast $ast
+        $out.paramPreview = $preview
+        if ($null -eq $preview -or $preview.count -eq 0) {
+            $out.schemaMode = 'raw'
+        } else {
+            # Walk fields once to decide typed/partial/raw via unsupported widget detection.
+            $paramBlock = $ast.FindAll(
+                { param($x) $x -is [System.Management.Automation.Language.ParamBlockAst] },
+                $false) | Select-Object -First 1
+            $hasUnsupported = $false
+            $hasRequiredUnsupported = $false
+            $commentHelp = Get-ParamHelpFromComments -Ast $ast
+            foreach ($p in $paramBlock.Parameters) {
+                try {
+                    $spec = ConvertTo-WidgetSpec -ParamAst $p -CommentHelp $commentHelp
+                    if ($spec.widget -eq 'unsupported') {
+                        $hasUnsupported = $true
+                        if ($spec.required) { $hasRequiredUnsupported = $true }
+                    }
+                } catch { Write-HubError $_ }
+            }
+            if ($hasRequiredUnsupported) { $out.schemaMode = 'raw' }
+            elseif ($hasUnsupported)     { $out.schemaMode = 'partial' }
+            else                          { $out.schemaMode = 'typed' }
+        }
+    } catch {
+        Write-HubError $_
+    }
+
+    return $out
 }
 
 function Invoke-SchemaRoute {

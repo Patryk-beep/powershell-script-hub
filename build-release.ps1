@@ -44,7 +44,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '1.1.0.0',
+    [string]$Version = '1.4.13.0',
     [string]$Tag,
     [switch]$Publish
 )

@@ -44,6 +44,11 @@ function hubApp() {
     // ── Security ────────────────────────────────────────────────────
     csrfToken: '',
 
+    // ── Command-K palette (P-ui-3) ──────────────────────────────────
+    paletteOpen: false,
+    paletteQuery: '',
+    paletteIndex: 0,
+
     // ── Lifecycle ───────────────────────────────────────────────────
     async init() {
       this.csrfToken = this.readCsrfCookie();
@@ -225,16 +230,28 @@ function hubApp() {
         const tag = (ev.target && ev.target.tagName) || '';
         const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
+        // Ctrl/Cmd+K → toggle command palette (always allowed unless typing in a non-palette input)
+        if ((ev.ctrlKey || ev.metaKey) && ev.key && ev.key.toLowerCase() === 'k') {
+          const inPaletteInput = ev.target && ev.target.classList && ev.target.classList.contains('palette-input');
+          if (!inField || inPaletteInput) {
+            ev.preventDefault();
+            if (this.paletteOpen) { this.closePalette(); } else { this.openPalette(); }
+            return;
+          }
+        }
+
         // "/" focuses search (when not editing a field, not in form view, not in setup)
-        if (ev.key === '/' && !inField && !this.selected && !this.setupOpen) {
+        if (ev.key === '/' && !inField && !this.selected && !this.setupOpen && !this.paletteOpen) {
           ev.preventDefault();
           this.$refs.searchInput && this.$refs.searchInput.focus();
           return;
         }
 
-        // Esc → close setup, OR deselect item, OR clear search
+        // Esc → close palette, close setup, deselect item, OR clear search
         if (ev.key === 'Escape') {
-          if (this.setupOpen) {
+          if (this.paletteOpen) {
+            this.closePalette();
+          } else if (this.setupOpen) {
             this.closeSetup();
           } else if (this.selected) {
             this.deselect();
@@ -371,6 +388,93 @@ function hubApp() {
         }
       }
       this.formValues = v;
+    },
+
+    // ── Param chip strip helpers (P-schema-3) ──────────────────────
+    paramChipTags(item) {
+      if (!item || !item.paramPreview) return [];
+      const map = {
+        string:      { iconRef: '#i-terminal',  title: 'text' },
+        number:      { iconRef: '#i-hash',      title: 'number' },
+        bool:        { iconRef: '#i-check',     title: 'boolean' },
+        switch:      { iconRef: '#i-toggle',    title: 'switch' },
+        file:        { iconRef: '#i-folder',    title: 'file path' },
+        password:    { iconRef: '#i-lock',      title: 'password / credential' },
+        datetime:    { iconRef: '#i-calendar',  title: 'date / time' },
+        url:         { iconRef: '#i-link',      title: 'URL' },
+        guid:        { iconRef: '#i-hash',      title: 'GUID' },
+        multi:       { iconRef: '#i-list-multi', title: 'multi-value' },
+        hashtable:   { iconRef: '#i-list-multi', title: 'hashtable' },
+        dropdown:    { iconRef: '#i-select',    title: 'choice' },
+        unsupported: { iconRef: '#i-puzzle',    title: 'unsupported — raw fallback' },
+        other:       { iconRef: '#i-terminal',  title: 'other' }
+      };
+      const tags = Array.isArray(item.paramPreview.typeTags) ? item.paramPreview.typeTags : [];
+      return tags.slice(0, 4).map(t => Object.assign({ kind: t }, map[t] || map.other));
+    },
+
+    isRawCard(item) {
+      return !!item && item.kind === 'ps1' && item.schemaMode === 'raw';
+    },
+
+    fieldGroupedBySet(fields) {
+      const list = Array.isArray(fields) ? fields : [];
+      const named = new Set();
+      for (const f of list) {
+        if (f.parameterSet && f.parameterSet !== '__AllParameterSets') {
+          named.add(f.parameterSet);
+        }
+      }
+      if (named.size < 2) {
+        return [{ setName: null, fields: list }];
+      }
+      const groups = [];
+      for (const setName of named) {
+        const inSet = list.filter(f =>
+          f.parameterSet === setName || !f.parameterSet || f.parameterSet === '__AllParameterSets'
+        );
+        groups.push({ setName, fields: inSet });
+      }
+      return groups;
+    },
+
+    textareaCountHint(field, val) {
+      const min = field ? field.countMin : null;
+      const max = field ? field.countMax : null;
+      if ((min === null || min === undefined) && (max === null || max === undefined)) return '';
+      const text = (val == null) ? '' : String(val);
+      const lines = text.split(/\r?\n/).filter(s => s.trim().length).length;
+      const minLabel = (min === null || min === undefined) ? '0' : String(min);
+      const maxLabel = (max === null || max === undefined) ? '∞' : String(max);
+      return `${lines} value${lines === 1 ? '' : 's'} (${minLabel}-${maxLabel} allowed)`;
+    },
+
+    // ── Command-K palette (P-ui-3) ──────────────────────────────────
+    get paletteResults() {
+      const q = (this.paletteQuery || '').trim().toLowerCase();
+      const base = this.items || [];
+      const filter = q
+        ? base.filter(it =>
+            (it.name || '').toLowerCase().includes(q) ||
+            (it.description || '').toLowerCase().includes(q) ||
+            ((it.path || '').split(/[\\/]/).pop() || '').toLowerCase().includes(q))
+        : base;
+      return filter
+        .slice()
+        .sort((a, b) => (a.name || '').length - (b.name || '').length)
+        .slice(0, 10);
+    },
+
+    openPalette()  { this.paletteOpen = true; this.paletteQuery = ''; this.paletteIndex = 0; },
+    closePalette() { this.paletteOpen = false; this.paletteQuery = ''; this.paletteIndex = 0; },
+    selectPaletteItem() {
+      const it = this.paletteResults[this.paletteIndex];
+      if (it) { this.selectItem(it); this.closePalette(); }
+    },
+    movePaletteIndex(delta) {
+      const len = this.paletteResults.length;
+      if (len === 0) return;
+      this.paletteIndex = (this.paletteIndex + delta + len) % len;
     },
 
     deselect() {

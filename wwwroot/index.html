@@ -5,11 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
   <title>Hub</title>
+  <link rel="preload" as="font" type="font/woff2" href="vendor/fonts/geist-sans-latin.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="vendor/fonts/geist-mono-latin.woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
   <script src="app.js" defer></script>
   <script src="vendor/alpine.min.js" defer></script>
 </head>
 <body x-data="hubApp()" x-init="init()" x-cloak>
+
+  <!-- Animated multi-blob gradient underlay (P-ui-5b) — covers entire viewport at all scroll positions -->
+  <div class="gradient-bg" aria-hidden="true">
+    <span class="blob blob-violet"></span>
+    <span class="blob blob-cyan"></span>
+    <span class="blob blob-magenta"></span>
+    <span class="blob blob-amber"></span>
+  </div>
+
 
   <!-- Inline SVG icon sprite (Lucide-derived paths, MIT) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -39,6 +50,14 @@
       <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></symbol>
       <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></symbol>
+      <symbol id="i-hash" viewBox="0 0 24 24"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+      <symbol id="i-toggle" viewBox="0 0 24 24"><rect x="1" y="5" width="22" height="14" rx="7" ry="7"/><circle cx="16" cy="12" r="3" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-list-multi" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="14" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+      <symbol id="i-select" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+      <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.4 7H17V4.6a2.6 2.6 0 0 0-5.2 0V7H8.6a2.6 2.6 0 0 0 0 5.2H11V14a3 3 0 1 1-6 0v-1H3v1a5 5 0 0 0 8.8 3.3 5 5 0 0 0 8.6-3.3v-1.4a2.6 2.6 0 0 0 0-5.2z"/></symbol>
     </defs>
   </svg>
 
@@ -227,6 +246,30 @@
           <p class="item-description" x-show="item.description" x-text="item.description" :title="item.description"></p>
           <p class="item-description item-description-missing" x-show="!item.description">No description available.</p>
 
+          <div class="item-card-params" x-show="item.paramPreview || isRawCard(item)">
+            <template x-if="isRawCard(item)">
+              <span class="param-chip param-chip-raw" title="No typed schema — raw arguments only">
+                <svg class="icon param-chip-icon" aria-hidden="true"><use href="#i-info"/></svg>
+                <span>raw</span>
+              </span>
+            </template>
+            <template x-if="item.paramPreview">
+              <span class="param-chip" :title="item.paramPreview.count + ' parameter' + (item.paramPreview.count === 1 ? '' : 's')">
+                <span x-text="item.paramPreview.count + ' param' + (item.paramPreview.count === 1 ? '' : 's')"></span>
+              </span>
+            </template>
+            <template x-if="item.paramPreview && item.paramPreview.requiredCount > 0">
+              <span class="param-chip param-chip-required" :title="item.paramPreview.requiredCount + ' required'">
+                <span x-text="item.paramPreview.requiredCount + ' required'"></span>
+              </span>
+            </template>
+            <template x-for="tag in paramChipTags(item)" :key="tag.kind">
+              <span class="param-chip" :title="tag.title">
+                <svg class="icon param-chip-icon" aria-hidden="true"><use :href="tag.iconRef"/></svg>
+              </span>
+            </template>
+          </div>
+
           <div class="item-foot">
             <span class="item-foot-row item-root" :title="item.root">
               <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
@@ -283,17 +326,60 @@
                 <template x-if="field.widget !== 'checkbox' && field.widget !== 'checkbox-switch'">
                   <label class="form-label">
                     <span class="form-name" x-text="field.name"></span>
+                    <span class="form-aliases" x-show="field.aliases && field.aliases.length" x-text="'aka: ' + (field.aliases || []).join(', ')"></span>
                     <span class="form-type" x-text="field.type"></span>
                     <span class="form-required" x-show="field.required" title="Required">*</span>
                   </label>
                 </template>
 
                 <template x-if="field.widget === 'textbox'">
-                  <input type="text" class="form-input" x-model="formValues[field.name]" :placeholder="field.default ?? 'value'" :required="field.required" autocomplete="off" spellcheck="false">
+                  <input type="text" class="form-input"
+                         x-model="formValues[field.name]"
+                         :placeholder="field.default ?? 'value'"
+                         :required="field.required"
+                         :pattern="field.pattern || null"
+                         :minlength="field.minlength || null"
+                         :maxlength="field.maxlength || null"
+                         autocomplete="off" spellcheck="false">
                 </template>
 
                 <template x-if="field.widget === 'number'">
-                  <input type="number" class="form-input" x-model.number="formValues[field.name]" :required="field.required">
+                  <input type="number" class="form-input"
+                         x-model.number="formValues[field.name]"
+                         :required="field.required"
+                         :min="(field.min !== null && field.min !== undefined) ? field.min : null"
+                         :max="(field.max !== null && field.max !== undefined) ? field.max : null"
+                         :step="field.step || null">
+                </template>
+
+                <template x-if="field.widget === 'password'">
+                  <input type="password" class="form-input"
+                         x-model="formValues[field.name]"
+                         :required="field.required"
+                         :minlength="field.minlength || null"
+                         :maxlength="field.maxlength || null"
+                         autocomplete="new-password" spellcheck="false">
+                </template>
+
+                <template x-if="field.widget === 'datetime-local'">
+                  <input type="datetime-local" class="form-input"
+                         x-model="formValues[field.name]"
+                         :required="field.required">
+                </template>
+
+                <template x-if="field.widget === 'url'">
+                  <input type="url" class="form-input"
+                         x-model="formValues[field.name]"
+                         :required="field.required"
+                         :pattern="field.pattern || null"
+                         autocomplete="off">
+                </template>
+
+                <template x-if="field.widget === 'unsupported'">
+                  <div class="form-unsupported">
+                    <svg class="icon" aria-hidden="true"><use href="#i-puzzle"/></svg>
+                    <span>Not editable in typed mode (e.g. ScriptBlock). Run via raw mode if required.</span>
+                  </div>
                 </template>
 
                 <template x-if="field.widget === 'dropdown'">
@@ -307,6 +393,10 @@
 
                 <template x-if="field.widget === 'textarea-multi'">
                   <textarea class="form-input form-textarea" x-model="formValues[field.name]" placeholder="One value per line" spellcheck="false"></textarea>
+                </template>
+
+                <template x-if="field.widget === 'textarea-multi' && (field.countMin !== null || field.countMax !== null)">
+                  <small class="form-help" x-text="textareaCountHint(field, formValues[field.name])"></small>
                 </template>
 
                 <template x-if="field.widget === 'file'">
@@ -466,6 +556,43 @@
             <span x-show="setupSaving">Saving…</span>
           </button>
         </footer>
+      </div>
+    </div>
+  </template>
+
+  <!-- Command-K palette (P-ui-3) -->
+  <template x-if="paletteOpen">
+    <div class="dialog-backdrop palette-backdrop" @click.self="closePalette()" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="dialog palette-dialog">
+        <input
+          type="text"
+          class="input palette-input"
+          x-model="paletteQuery"
+          x-init="$nextTick(() => $el.focus())"
+          @keydown.arrow-down.prevent="movePaletteIndex(1)"
+          @keydown.arrow-up.prevent="movePaletteIndex(-1)"
+          @keydown.enter.prevent="selectPaletteItem()"
+          placeholder="Search scripts and tools — Esc to close"
+          spellcheck="false"
+          autocomplete="off">
+        <ul class="palette-list">
+          <template x-for="(item, idx) in paletteResults" :key="item.id">
+            <li
+              class="palette-item"
+              :class="{ 'palette-item-active': idx === paletteIndex }"
+              @click="paletteIndex = idx; selectPaletteItem()"
+              @mouseenter="paletteIndex = idx">
+              <span class="palette-item-name" x-text="item.name"></span>
+              <span class="palette-item-meta">
+                <span class="badge" x-text="item.kind"></span>
+                <span class="palette-item-path" x-text="item.path" :title="item.path"></span>
+              </span>
+            </li>
+          </template>
+          <template x-if="paletteResults.length === 0">
+            <li class="palette-empty">No matches.</li>
+          </template>
+        </ul>
       </div>
     </div>
   </template>

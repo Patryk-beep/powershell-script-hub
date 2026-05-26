@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.13.0] - 2026-05-26
+
+### Added
+- **Extended `param()` autodetect** — `ConvertTo-WidgetSpec` now covers
+  `double`/`decimal`/`float`/`single`, `datetime`, `guid`, `uri`,
+  `securestring`/`pscredential`, `hashtable`, `object[]` / `double[]` /
+  `bool[]` / `switch[]`, plus validators `ValidateRange`, `ValidatePattern`,
+  `ValidateLength`, `ValidateCount`, `ValidateNotNullOrEmpty`,
+  `ValidateScript`, `Alias`, `Position`, `ParameterSetName`, `AllowNull`,
+  `AllowEmptyString`, `AllowEmptyCollection`. Comment-based `.PARAMETER`
+  help honoured as fallback when `[Parameter(HelpMessage=...)]` is absent.
+- **`paramPreview` + schema cache** — `/api/items` now carries a slim
+  `paramPreview` (count, requiredCount, typeTags, parameterSets) and
+  `schemaMode` (`typed` / `partial` / `raw`) per item. Backed by an
+  mtime+size-keyed JSON cache at `%LOCALAPPDATA%\Hub\schema-cache.json`.
+  Single-pass AST via new `Get-ItemMetadata`.
+- **Card chip strip** — typed `.ps1` cards surface count + required +
+  up to 4 type icons; raw `.ps1` cards show a gold "raw" badge;
+  `.exe` and cloud-only items stay clean.
+- **Vendored fonts** — Geist Sans + Geist Mono (Latin subset WOFF2,
+  ~42 KB total) under `wwwroot/vendor/fonts/`. WOFF2 MIME registered.
+  Preload links + `font-display: swap`.
+- **shadcn-hybrid neutral palette** (OKLCH) replaces Catppuccin Mocha.
+  Legacy token names aliased so existing CSS rules cascade-inherit.
+  Component primitives `.card`, `.btn`, `.btn-primary/ghost/danger`,
+  `.input`, `.badge`, `.dialog`, `.dialog-backdrop`.
+- **Glassmorphism overlay** — `backdrop-filter` on cards / header /
+  log pane / dialogs. Animated multi-blob gradient underlay
+  (violet / cyan / magenta / amber) with drift keyframes; gated by
+  `prefers-reduced-motion`. Floating header card detaches from viewport
+  edges.
+- **Command-K palette** — `Ctrl+K` / `Cmd+K` opens fuzzy-search overlay
+  over the catalog. Pure client-side filter, no new API.
+- New form widgets: `password`, `datetime-local`, `url`, `unsupported`
+  (for `scriptblock` params).
+- Inline aliases display under field name when `[Alias(...)]` is present.
+- `countMin` / `countMax` live hint on `textarea-multi` widgets.
+
+### Fixed
+- **PS5 codepage parse-errors** — `.ps1` scripts saved as UTF-8 without
+  BOM containing non-ASCII glyphs (e.g. ✓ ✗) no longer fall through to
+  raw mode. All parsing routes through `Read-ScriptAst` which uses
+  `StreamReader(path, UTF-8, detectBOM=true)` + `Parser::ParseInput`.
+- `smoke-phase1.ps1` stale assertions refreshed (pre-P2 test rot).
+- `.hub-version` UI chip now reflects current build (was pinned at 1.1.0.0).
+
+### Changed
+- `Get-ItemDescription` retained as thin delegator; `Get-ItemMetadata`
+  is the canonical AST entry-point.
+- `/api/items/{id}/schema` response carries new `schemaMode` field
+  alongside the existing `mode`. Additive — old clients unaffected.
+
 ## [1.1.0] - 2026-05-19
 
 ### Added

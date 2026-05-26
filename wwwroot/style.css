@@ -1,72 +1,124 @@
-/* Hub — Rosé Pine Moon dark dashboard
-   Elevation tiers: bg < surface-1 < surface-2 < surface-3
-   Accents: iris (primary), foam (ok), gold (warn), love (err) */
+/* Hub — shadcn-hybrid neutral dark dashboard (P-ui-1..4, 2026-05-26)
+   Palette: neutral OKLCH grays + blue-violet accent. Hex fallbacks paired per token.
+   Elevation: bg-base < bg-surface < bg-muted < bg-elevated.
+   Semantic: accent (action), danger (delete), warn (caution), success (ok). */
+
+/* === Vendored fonts (Geist Sans + Geist Mono — Latin subset, SIL OFL) === */
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('vendor/fonts/geist-sans-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('vendor/fonts/geist-mono-latin.woff2') format('woff2');
+}
 
 :root {
-  /* Palette (locked: K8 / hub_project) */
-  --rp-base:    #232136;
-  --rp-surface: #2a273f;
-  --rp-overlay: #393552;
-  --rp-text:    #e0def4;
-  --rp-subtle:  #908caa;
-  --rp-muted:   #6e6a86;
-  --rp-iris:    #c4a7e7;
-  --rp-foam:    #9ccfd8;
-  --rp-gold:    #f6c177;
-  --rp-love:    #eb6f92;
-  --rp-pine:    #3e8fb0;
-  --rp-rose:    #ea9a97;
+  /* === shadcn neutral palette === */
+  /* Each pair: hex fallback first, OKLCH override second. Browsers without OKLCH support keep the hex. */
+  --bg-base:        #1a1a1a;
+  --bg-base:        oklch(0.145 0 0);
+  --bg-surface:     #262626;
+  --bg-surface:     oklch(0.205 0 0);
+  --bg-muted:       #2e2e2e;
+  --bg-muted:       oklch(0.225 0 0);
+  --bg-elevated:    #353535;
+  --bg-elevated:    oklch(0.269 0 0);
 
-  /* Semantic tokens */
-  --bg:           #1c1a2e;
-  --bg-elevated:  var(--rp-base);
-  --surface-1:    var(--rp-surface);
-  --surface-2:    var(--rp-overlay);
-  --surface-3:    #423d5c;
-  --text:         var(--rp-text);
-  --text-muted:   var(--rp-subtle);
-  --text-faint:   var(--rp-muted);
-  --border:       rgba(196, 167, 231, 0.10);
-  --border-strong: rgba(196, 167, 231, 0.22);
-  --accent:       var(--rp-iris);
-  --accent-soft:  rgba(196, 167, 231, 0.14);
-  --accent-glow:  rgba(196, 167, 231, 0.28);
-  --ok:           var(--rp-foam);
-  --ok-soft:      rgba(156, 207, 216, 0.14);
-  --warn:         var(--rp-gold);
-  --warn-soft:    rgba(246, 193, 119, 0.12);
-  --err:          var(--rp-love);
-  --err-soft:     rgba(235, 111, 146, 0.14);
-  --ring:         rgba(196, 167, 231, 0.45);
+  --border:         #3a3a3a;
+  --border:         oklch(0.286 0 0);
+  --border-strong:  #4d4d4d;
+  --border-strong:  oklch(0.371 0 0);
+  --ring:           rgba(255, 255, 255, 0.10);
 
-  /* Type */
-  --font-sans: 'Inter', 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-mono: 'Cascadia Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  --fg:             #fafafa;
+  --fg:             oklch(0.985 0 0);
+  --fg-muted:       #a3a3a3;
+  --fg-muted:       oklch(0.708 0 0);
+  --fg-subtle:      #737373;
+  --fg-subtle:      oklch(0.556 0 0);
 
-  /* Rhythm */
-  --r-1: 4px;
-  --r-2: 8px;
-  --r-3: 12px;
-  --r-4: 16px;
-  --r-5: 24px;
-  --r-6: 32px;
+  --accent:         #4f7bd9;
+  --accent:         oklch(0.623 0.214 259.815);
+  --accent-fg:      #fafafa;
+  --accent-fg:      oklch(0.985 0 0);
+  --accent-soft:    rgba(79, 123, 217, 0.16);
+  --accent-glow:    rgba(79, 123, 217, 0.36);
 
-  /* Radii */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --danger:         #e8546a;
+  --danger:         oklch(0.704 0.191 22.216);
+  --warn:           #f0c64a;
+  --warn:           oklch(0.828 0.189 84.429);
+  --success:        #4ec588;
+  --success:        oklch(0.696 0.170 162.480);
+
+  /* === Legacy aliases (preserve existing CSS class rules from Catppuccin pass) === */
+  --bg:            var(--bg-base);
+  --surface-1:     var(--bg-surface);
+  --surface-2:     var(--bg-muted);
+  --surface-3:     var(--bg-elevated);
+  --text:          var(--fg);
+  --text-muted:    var(--fg-muted);
+  --text-faint:    var(--fg-subtle);
+  --accent-2:      var(--accent);
+  --ok:            var(--success);
+  --ok-soft:       rgba(78, 197, 136, 0.16);
+  --warn-soft:     rgba(240, 198, 74, 0.16);
+  --err:           var(--danger);
+  --err-soft:      rgba(232, 84, 106, 0.16);
+  --info:          var(--accent);
+  --info-soft:     var(--accent-soft);
+
+  /* === Type === */
+  --font-ui:        'Geist', 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono:      'Geist Mono', 'Cascadia Mono', 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
+  --font-sans:      var(--font-ui);   /* legacy alias */
+
+  /* === Rhythm === */
+  --r-1: 4px;  --r-2: 8px;  --r-3: 12px;  --r-4: 16px;
+  --r-5: 24px; --r-6: 32px; --r-7: 40px;  --r-8: 56px;
+
+  /* === Radii === */
+  --radius-sm:   6px;
+  --radius:      8px;
+  --radius-md:   8px;   /* legacy alias */
+  --radius-lg:   10px;
   --radius-pill: 999px;
 
-  /* Motion */
-  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --dur-fast: 120ms;
-  --dur-base: 180ms;
-  --dur-slow: 240ms;
+  /* === Motion === */
+  --ease:       cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur:        180ms;
+  --dur-fast:   120ms;
+  --dur-base:   180ms;
+  --dur-slow:   240ms;
 
-  /* Shadow */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.32);
+  /* === Shadow stack (shadcn two-layer) === */
+  --shadow-sm: 0 0 0 1px var(--border), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow:    0 0 0 1px var(--border), 0 4px 12px -2px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 0 0 1px var(--border-strong), 0 12px 32px -4px rgba(0, 0, 0, 0.50);
+  --shadow-1:  var(--shadow-sm);   /* legacy aliases */
+  --shadow-2:  var(--shadow);
   --shadow-glow: 0 0 0 1px var(--border-strong), 0 0 24px -4px var(--accent-glow);
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-base);
+  color: var(--fg);
+}
+
+code, pre, kbd, samp,
+.log-pane, .form-pane-path, .item-foot-row,
+.palette-item-path {
+  font-family: var(--font-mono);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -80,6 +132,124 @@
 
 [x-cloak] { display: none !important; }
 
+/* ============================================================
+   shadcn component primitives (P-ui-2)
+   Reusable surface classes consumed by markup OR layered above
+   existing class rules to deliver the shadcn aesthetic.
+   ============================================================ */
+
+.card {
+  background: var(--bg-surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  transition: transform var(--dur) var(--ease),
+              box-shadow var(--dur) var(--ease),
+              border-color var(--dur) var(--ease);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-strong);
+  }
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--r-2);
+  height: 36px;
+  padding: 0 var(--r-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease),
+              border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease);
+}
+.btn:hover    { background: var(--bg-elevated); border-color: var(--border-strong); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
+
+.btn-primary  { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+.btn-primary:hover { filter: brightness(1.08); }
+
+.btn-ghost    { background: transparent; border-color: transparent; color: var(--fg-muted); }
+.btn-ghost:hover { background: var(--bg-surface); color: var(--fg); border-color: var(--border); }
+
+.btn-danger   { background: var(--danger); color: var(--fg); border-color: transparent; }
+.btn-danger:hover { filter: brightness(1.08); }
+
+.input {
+  height: 36px;
+  padding: 0 var(--r-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  color: var(--fg);
+  font: 13px var(--font-ui);
+  transition: border-color var(--dur) var(--ease),
+              box-shadow var(--dur) var(--ease);
+}
+.input::placeholder { color: var(--fg-subtle); }
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 var(--r-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font: 500 11px var(--font-ui);
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.60);
+  backdrop-filter: blur(4px);
+}
+
+.dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Legacy form-input + buttons: ensure they consume the new tokens at the right sizes */
+.form-input {
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.form-input:focus,
+.form-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.form-required { color: var(--danger); }
+
+/* ============================================================
+   END P-ui-2 primitives
+   ============================================================ */
+
 /* === Setup modal (P1.6) === */
 
 .modal-backdrop {
@@ -90,8 +260,8 @@
   align-items: flex-start;
   justify-content: center;
   padding: 64px 24px 24px;
-  background: rgba(11, 9, 22, 0.65);
-  backdrop-filter: blur(4px);
+  background: rgba(17, 17, 27, 0.72);
+  backdrop-filter: blur(6px);
   animation: backdrop-in var(--dur-slow) var(--ease) both;
 }
 
@@ -212,8 +382,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  height: 100%;
-  background: var(--bg);
+  min-height: 100%;
   color: var(--text);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -222,6 +391,15 @@ html, body {
   text-rendering: optimizeLegibility;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
   font-variant-numeric: tabular-nums;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 0% 0%, rgba(203, 166, 247, 0.10) 0%, transparent 60%),
+    radial-gradient(900px 500px at 100% 10%, rgba(137, 220, 235, 0.07) 0%, transparent 55%),
+    radial-gradient(700px 400px at 60% 100%, rgba(250, 179, 135, 0.06) 0%, transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
 }
 
 ::selection { background: var(--accent-soft); color: var(--text); }
@@ -272,9 +450,9 @@ html, body {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--rp-iris) 0%, var(--rp-pine) 100%);
-  color: var(--rp-base);
-  box-shadow: var(--shadow-1);
+  background: linear-gradient(135deg, var(--ctp-mauve) 0%, var(--ctp-sky) 100%);
+  color: var(--ctp-base);
+  box-shadow: 0 0 0 1px rgba(203, 166, 247, 0.35), 0 4px 14px -4px rgba(203, 166, 247, 0.55);
 }
 
 .brand-mark svg {
@@ -345,7 +523,7 @@ html, body {
   align-items: center;
   gap: var(--r-3);
   flex-wrap: wrap;
-  padding: var(--r-4) var(--r-5) 0 var(--r-5);
+  padding: var(--r-4) var(--r-5) var(--r-5) var(--r-5);
 }
 
 .search-box {
@@ -505,7 +683,7 @@ html, body {
 }
 
 .chip-standalone[aria-pressed='true'] .chip-count {
-  background: rgba(196, 167, 231, 0.18);
+  background: rgba(203, 166, 247, 0.22);
   color: var(--accent);
 }
 
@@ -519,7 +697,7 @@ html, body {
   font-size: 12px;
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23908caa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a6adc8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
 }
@@ -590,13 +768,13 @@ main {
 
 .banner-error {
   background: var(--err-soft);
-  border-color: rgba(235, 111, 146, 0.35);
+  border-color: rgba(243, 139, 168, 0.40);
   color: var(--err);
 }
 
 .banner-warn {
   background: var(--warn-soft);
-  border-color: rgba(246, 193, 119, 0.35);
+  border-color: rgba(250, 179, 135, 0.40);
   color: var(--warn);
 }
 
@@ -611,7 +789,7 @@ main {
 
 .items-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: var(--r-3);
 }
 
@@ -620,7 +798,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px 14px 12px;
+  padding: 18px 18px 16px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -704,9 +882,11 @@ main {
 }
 
 .item-card:hover {
-  border-color: var(--border-strong);
+  border-color: rgba(203, 166, 247, 0.45);
   background: var(--surface-1);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -16px rgba(203, 166, 247, 0.55),
+              0 0 0 1px rgba(203, 166, 247, 0.18);
 }
 
 .item-card:focus-visible {
@@ -734,15 +914,18 @@ main {
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .kind-icon.kind-ps1 {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: linear-gradient(135deg, rgba(203, 166, 247, 0.30) 0%, rgba(180, 190, 254, 0.30) 100%);
+  color: var(--ctp-mauve);
+  box-shadow: inset 0 0 0 1px rgba(203, 166, 247, 0.45);
 }
 .kind-icon.kind-exe {
-  background: var(--ok-soft);
-  color: var(--ok);
+  background: linear-gradient(135deg, rgba(148, 226, 213, 0.30) 0%, rgba(137, 220, 235, 0.30) 100%);
+  color: var(--ctp-teal);
+  box-shadow: inset 0 0 0 1px rgba(148, 226, 213, 0.45);
 }
 
 .item-card-meta {
@@ -838,6 +1021,9 @@ main {
   grid-template-columns: minmax(0, 1fr);
   gap: var(--r-5);
   max-width: 920px;
+  margin: 0 auto;
+  padding: 0 var(--r-5);
+  width: 100%;
 }
 
 .form-pane-header {
@@ -960,7 +1146,7 @@ main {
 
 select.form-input {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23908caa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a6adc8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
@@ -1002,7 +1188,7 @@ select.form-input {
 .form-checkbox:checked {
   background: var(--accent);
   border-color: var(--accent);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23232136' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%231e1e2e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: center;
 }
@@ -1048,7 +1234,7 @@ input[type='file'].form-input::file-selector-button:hover {
   gap: 10px;
   align-items: flex-start;
   background: var(--warn-soft);
-  border: 1px solid rgba(246, 193, 119, 0.30);
+  border: 1px solid rgba(250, 179, 135, 0.34);
   padding: 12px 14px;
   margin: 0;
   border-radius: var(--radius-md);
@@ -1063,8 +1249,7 @@ input[type='file'].form-input::file-selector-button:hover {
   align-items: center;
   gap: var(--r-3);
   flex-wrap: wrap;
-  padding-top: var(--r-3);
-  border-top: 1px solid var(--border);
+  margin-top: var(--r-4);
 }
 
 .btn-primary,
@@ -1088,9 +1273,9 @@ input[type='file'].form-input::file-selector-button:hover {
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: var(--rp-base);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+  background: linear-gradient(135deg, var(--ctp-mauve) 0%, var(--ctp-pink) 100%);
+  color: var(--ctp-base);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.20), 0 8px 22px -10px rgba(203, 166, 247, 0.55);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -1114,14 +1299,15 @@ input[type='file'].form-input::file-selector-button:hover {
 }
 
 .btn-danger {
-  background: var(--err);
-  color: var(--rp-base);
+  background: linear-gradient(135deg, var(--ctp-red) 0%, var(--ctp-peach) 100%);
+  color: var(--ctp-base);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.20), 0 8px 22px -10px rgba(243, 139, 168, 0.55);
 }
 
 .btn-danger:hover { filter: brightness(1.08); }
 .btn-danger:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(235, 111, 146, 0.30);
+  box-shadow: 0 0 0 3px rgba(243, 139, 168, 0.34);
 }
 
 .btn-ghost {
@@ -1182,23 +1368,31 @@ input[type='file'].form-input::file-selector-button:hover {
 /* === Log pane === */
 
 .log-section {
-  background: #18172a;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
   display: flex;
   flex-direction: column;
+  gap: var(--r-2);
   min-height: 220px;
   resize: vertical;
+  box-shadow: none;
 }
 
 .log-header {
   display: flex;
   align-items: center;
   gap: var(--r-3);
-  padding: 8px 12px;
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border);
+  padding: 8px 14px;
+  background: color-mix(in oklab, var(--bg-base) 55%, transparent);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1px 0 var(--glass-edge) inset,
+    0 6px 18px -4px rgba(0, 0, 0, 0.45);
 }
 
 .log-title {
@@ -1259,12 +1453,19 @@ input[type='file'].form-input::file-selector-button:hover {
 
 .log-pane {
   margin: 0;
-  padding: 12px 14px;
+  padding: 14px 16px;
   flex: 1;
   min-height: 160px;
   max-height: 60vh;
   overflow-y: auto;
-  background: transparent;
+  background: color-mix(in oklab, var(--bg-base) 55%, transparent);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1px 0 var(--glass-edge) inset,
+    0 6px 18px -4px rgba(0, 0, 0, 0.45);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1277,7 +1478,7 @@ input[type='file'].form-input::file-selector-button:hover {
 .log-pane::-webkit-scrollbar { width: 10px; }
 .log-pane::-webkit-scrollbar-track { background: transparent; }
 .log-pane::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; }
-.log-pane::-webkit-scrollbar-thumb:hover { background: var(--rp-overlay); }
+.log-pane::-webkit-scrollbar-thumb:hover { background: var(--ctp-surface2); }
 
 .log-empty {
   color: var(--text-faint);
@@ -1288,10 +1489,10 @@ input[type='file'].form-input::file-selector-button:hover {
 
 .log-line { display: inline; }
 
-.log-out { color: var(--text); }
-.log-err { color: var(--err); }
-.log-sys { color: var(--warn); font-style: italic; }
-.log-info { color: var(--ok); }
+.log-out  { color: var(--text); }
+.log-err  { color: var(--err); }
+.log-sys  { color: var(--ctp-yellow); font-style: italic; }
+.log-info { color: var(--info); }
 
 /* === Responsive === */
 
@@ -1311,3 +1512,572 @@ input[type='file'].form-input::file-selector-button:hover {
   .hub-meta { display: none; }
   .toolbar-count { display: none; }
 }
+
+/* ── Param chip strip (P-schema-3) ────────────────────────────────── */
+
+.item-card-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.param-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2, var(--bg-elevated));
+  color: var(--muted, var(--text));
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid var(--border);
+}
+
+.param-chip-required {
+  color: var(--love, #eb6f92);
+  border-color: var(--love-soft, var(--border));
+}
+
+.param-chip-raw {
+  color: var(--gold, #f6c177);
+  border-color: var(--gold-soft, var(--border));
+}
+
+.param-chip-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.form-unsupported {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-2, var(--bg-elevated));
+  color: var(--muted, var(--text));
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+
+.form-aliases {
+  font-size: 11px;
+  color: var(--muted, var(--text));
+  margin-left: 6px;
+  font-weight: normal;
+}
+
+.form-field fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 12px;
+  margin: 0 0 12px 0;
+}
+
+.form-field fieldset > legend {
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--muted, var(--text));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.form-paramset-group {
+  grid-column: 1 / -1;
+}
+
+/* ============================================================
+   Command-K palette (P-ui-3)
+   ============================================================ */
+
+.palette-backdrop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 60;
+}
+
+.palette-dialog {
+  width: min(620px, 92vw);
+  padding: var(--r-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--r-3);
+}
+
+.palette-input {
+  width: 100%;
+  height: 44px;
+  font-size: 14px;
+}
+
+.palette-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--r-3);
+  padding: var(--r-2) var(--r-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.palette-item-active {
+  background: var(--bg-elevated);
+}
+
+.palette-item-name {
+  font: 500 13px var(--font-ui);
+  color: var(--fg);
+  flex-shrink: 0;
+}
+
+.palette-item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--r-2);
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.palette-item-path {
+  font: 12px var(--font-mono);
+  color: var(--fg-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
+
+.palette-empty {
+  padding: var(--r-3);
+  color: var(--fg-muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+/* ============================================================
+   Glassmorphism layer (P-ui-5c, 2026-05-26 — full-viewport mesh + drift)
+   Multi-blob animated gradient underlay; cards refract a vibrant
+   dribbble-style mesh at all scroll positions.
+   Backdrop-filter floor: Chromium 76+ / Firefox 103+ / Safari 9+.
+   ============================================================ */
+
+/* CRITICAL: html owns the base colour. Body MUST be transparent so the
+   fixed gradient underlay at z-index:-1 isn't occluded by body's own bg. */
+html { background: var(--bg-base); }
+body { background: transparent; }
+
+/* Fixed underlay element — covers viewport at every scroll position. */
+.gradient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--bg-base);
+  filter: saturate(170%);
+}
+
+/* Centre fill — adds a 5th blob to eliminate the dim middle that
+   produced the previous "cutoff under navigation" perception. */
+.gradient-bg::before {
+  content: '';
+  position: absolute;
+  inset: 20% 15%;
+  background:
+    radial-gradient(closest-side, color-mix(in oklab, var(--accent) 80%, transparent), transparent 70%);
+  filter: blur(120px);
+  opacity: 0.45;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.gradient-bg .blob {
+  position: absolute;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+  will-change: transform;
+}
+
+/* Four-blob mesh — rich shadcn-leaning accents kept harmonious with --accent. */
+.gradient-bg .blob-violet {
+  top: -20vmax; left: -10vmax;
+  background: radial-gradient(closest-side, oklch(0.62 0.21 285), transparent);
+}
+.gradient-bg .blob-cyan {
+  top: -10vmax; right: -25vmax;
+  background: radial-gradient(closest-side, oklch(0.74 0.16 215), transparent);
+}
+.gradient-bg .blob-magenta {
+  bottom: -25vmax; left: 10vmax;
+  background: radial-gradient(closest-side, oklch(0.68 0.22 340), transparent);
+}
+.gradient-bg .blob-amber {
+  bottom: -15vmax; right: -20vmax;
+  background: radial-gradient(closest-side, oklch(0.78 0.16 60), transparent);
+  opacity: 0.40;
+}
+
+/* Slow drift animation — wrapped in reduced-motion gate. */
+@media (prefers-reduced-motion: no-preference) {
+  .gradient-bg .blob-violet  { animation: blob-drift-a 42s var(--ease) infinite alternate; }
+  .gradient-bg .blob-cyan    { animation: blob-drift-b 56s var(--ease) infinite alternate; }
+  .gradient-bg .blob-magenta { animation: blob-drift-c 48s var(--ease) infinite alternate; }
+  .gradient-bg .blob-amber   { animation: blob-drift-d 64s var(--ease) infinite alternate; }
+}
+
+@keyframes blob-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(12vmax, 8vmax, 0) scale(1.10); }
+}
+@keyframes blob-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(-10vmax, 14vmax, 0) scale(1.08); }
+}
+@keyframes blob-drift-c {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(14vmax, -10vmax, 0) scale(1.12); }
+}
+@keyframes blob-drift-d {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(-12vmax, -6vmax, 0) scale(1.10); }
+}
+
+/* Glass primitive variables (translucent surface tints) — STRONGER */
+:root {
+  --glass-tint:      color-mix(in oklab, var(--bg-surface) 60%, transparent);
+  --glass-tint-deep: color-mix(in oklab, var(--bg-surface) 72%, transparent);
+  --glass-edge:      color-mix(in oklab, white 12%, transparent);
+  --glass-blur:      blur(24px) saturate(180%);
+  --glass-blur-soft: blur(14px) saturate(150%);
+}
+
+/* Layer glass onto .card primitive — overrides solid background */
+.card,
+.item-card {
+  background: var(--glass-tint);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow:
+    0 1px 0 var(--glass-edge) inset,
+    0 0 0 1px var(--border),
+    0 10px 30px -4px rgba(0, 0, 0, 0.40);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card:hover,
+  .item-card:hover {
+    background: var(--glass-tint-deep);
+    box-shadow:
+      0 1px 0 var(--glass-edge) inset,
+      0 0 0 1px var(--border-strong),
+      0 20px 50px -6px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* Chrome — header + toolbar refract content beneath */
+.hub-header {
+  background: var(--glass-tint);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  border-bottom: 1px solid var(--glass-edge);
+}
+
+.toolbar {
+  background: color-mix(in oklab, var(--bg-base) 60%, transparent);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+}
+
+/* Dialogs (setup modal + command-K palette) get the strongest blur */
+.dialog,
+.modal {
+  background: var(--glass-tint-deep);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-color: var(--glass-edge);
+  box-shadow:
+    0 1px 0 var(--glass-edge) inset,
+    0 0 0 1px var(--border),
+    0 20px 60px -8px rgba(0, 0, 0, 0.55);
+}
+
+/* Modal backdrop already blurs in P-ui-2 .dialog-backdrop. Strengthen the dimming. */
+.dialog-backdrop,
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Inputs stay legible — glass would hurt input contrast. Keep them solid but bump the ring. */
+.input:focus,
+.form-input:focus {
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 0 24px -4px var(--accent-glow);
+}
+
+/* Chip strip and badges get the lightest glass for consistency */
+.param-chip,
+.badge {
+  background: color-mix(in oklab, var(--bg-muted) 70%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Log pane stays solid — text on translucent background hurts readability */
+/* (no glass override here on purpose) */
+
+/* ============================================================
+   END P-ui-5 glassmorphism layer
+   ============================================================ */
+
+/* ============================================================
+   P-ui-5c overrides — chrome bleed, button shadow, input glass
+   ============================================================ */
+
+/* Header — floating glass card. SAME tint + blur + shadow as .card so the
+   refraction reads uniform across the whole page. */
+.hub-header {
+  background: var(--glass-tint);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    0 1px 0 var(--glass-edge) inset,
+    0 0 0 1px var(--border),
+    0 10px 30px -4px rgba(0, 0, 0, 0.40);
+  margin: var(--r-4) var(--r-5);
+  padding: var(--r-4) var(--r-5);
+  top: var(--r-4);
+}
+
+@media (max-width: 480px) {
+  .hub-header {
+    margin: var(--r-3);
+    padding: var(--r-3) var(--r-4);
+    top: var(--r-3);
+  }
+}
+
+/* Toolbar — fully transparent (no glass tint of its own). Lets the gradient
+   show through cleanly without a competing refraction band. Cards + header
+   carry all the glass treatment. */
+.toolbar {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: none;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+/* Main grid container — breathing room from toolbar */
+main { padding-top: var(--r-3); }
+
+/* Buttons — kill the legacy "bottom glow" shadows. Glow ONLY on hover. */
+.btn,
+.btn-primary,
+.btn-ghost,
+.btn-danger {
+  box-shadow: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 1px solid transparent;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.10);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 24px -2px color-mix(in oklab, var(--accent) 60%, transparent);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--fg);
+  border: 1px solid transparent;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.10);
+  box-shadow:
+    0 0 0 1px var(--danger),
+    0 0 24px -2px color-mix(in oklab, var(--danger) 60%, transparent);
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  box-shadow: none;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--bg-surface) 60%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+  box-shadow: none;
+}
+
+/* Focus-visible (keyboard) keeps a tight ring — accessibility — but no
+   diffuse glow when the button is just sitting there idle. */
+.btn:focus-visible,
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.btn-danger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Pressed feel */
+.btn:active:not(:disabled),
+.btn-primary:active:not(:disabled),
+.btn-danger:active:not(:disabled) { transform: scale(0.98); }
+
+/* Inputs — replace the solid "black bar" with a translucent glass tier
+   that blends into the form-pane while staying legible. */
+.input,
+.form-input,
+.form-textarea,
+input[type="text"].form-input,
+input[type="number"].form-input,
+input[type="password"].form-input,
+input[type="url"].form-input,
+input[type="datetime-local"].form-input,
+select.form-input,
+textarea.form-input {
+  background: color-mix(in oklab, white 4%, transparent);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  color: var(--fg);
+}
+
+.input::placeholder,
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: var(--fg-subtle);
+}
+
+.input:focus,
+.input:focus-visible,
+.form-input:focus,
+.form-input:focus-visible,
+.form-textarea:focus,
+.form-textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  background: color-mix(in oklab, white 6%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Search-box wrapper is the ONLY bordered surface. Inner input transparent. */
+.search-box {
+  background: color-mix(in oklab, white 4%, transparent);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  color: var(--fg);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-input {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  color: var(--fg);
+}
+
+.search-input:focus {
+  outline: none;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Chip group / chip-standalone / sort-select — tighten to glass-edge tier */
+.chip-group,
+.chip-standalone,
+.sort-select {
+  background: color-mix(in oklab, white 3%, transparent);
+  border: 1px solid var(--glass-edge);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  color: var(--fg);
+}
+
+.chip[aria-pressed='true'] {
+  background: color-mix(in oklab, white 10%, transparent);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--glass-edge);
+}
+
+.chip:hover {
+  background: color-mix(in oklab, white 7%, transparent);
+  color: var(--fg);
+}
+
+.chip-standalone:hover {
+  background: color-mix(in oklab, white 7%, transparent);
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+
+.chip-standalone[aria-pressed='true'] {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip-count {
+  background: color-mix(in oklab, white 8%, transparent);
+}
+
+/* Sort select — match search box height + remove native chrome */
+.sort-select {
+  border-radius: var(--radius);
+  padding: 9px 32px 9px 12px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Toolbar drops its own bottom border to avoid stacking against header's. */
+.toolbar { border-bottom: none; }
+

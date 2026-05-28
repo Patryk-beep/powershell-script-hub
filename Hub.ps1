@@ -9,7 +9,10 @@ param(
     # Test-only knobs to verify TTL sweeper behaviour without waiting 30 minutes.
     # 0 = use production defaults.
     [int]$FastTtlSeconds = 0,
-    [int]$FastSweepSeconds = 0
+    [int]$FastSweepSeconds = 0,
+
+    # Override the default port (8765) — used by tests to avoid conflicting with a running Hub.
+    [int]$Port = 0
 )
 
 Set-StrictMode -Version Latest
@@ -19,7 +22,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $Script:Version          = '1.4.13.0'
-$Script:Port             = 8765
+$Script:Port             = if ($Port -gt 0) { $Port } else { 8765 }
 $Script:Listener         = $null
 $Script:ListenerHealthy  = $true
 $Script:HubMutex         = $null

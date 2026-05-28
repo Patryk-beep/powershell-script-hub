@@ -8,6 +8,7 @@
   <link rel="preload" as="font" type="font/woff2" href="vendor/fonts/geist-sans-latin.woff2" crossorigin>
   <link rel="preload" as="font" type="font/woff2" href="vendor/fonts/geist-mono-latin.woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
+  <script src="canvas-editor.js" defer></script>
   <script src="app.js" defer></script>
   <script src="vendor/alpine.min.js" defer></script>
 </head>
@@ -541,107 +542,197 @@
           </div>
         </template>
 
-        <!-- Workflow editor form -->
-        <template x-if="wfEditMode && wfForm">
-          <div class="wf-editor">
-            <div class="wf-toolbar">
-              <button type="button" class="btn-ghost" @click="wfEditMode = false; wfForm = null" :disabled="wfSaving">
+        <!-- Canvas workflow editor (replaces list editor) -->
+        <template x-if="cnCanvasMode">
+          <div class="cn-root">
+            <!-- Canvas toolbar -->
+            <div class="cn-header">
+              <button type="button" class="btn-ghost" @click="cnClose()">
                 <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
                 <span>Cancel</span>
               </button>
-              <span class="wf-toolbar-title" x-text="wfForm.id ? 'Edit Workflow' : 'New Workflow'"></span>
-              <button type="button" class="btn-primary" @click="wfSave()" :disabled="wfSaving || !wfForm.name.trim()">
+              <input type="text" class="cn-name-input" x-model="cnWorkflowName" placeholder="Workflow name…" autocomplete="off">
+              <button type="button" class="btn-ghost cn-fit-btn" @click="cnFitScreen()" title="Fit to screen">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/></svg>
+              </button>
+              <span class="cn-node-count" x-show="cnNodes.length" x-text="cnNodes.length + ' node' + (cnNodes.length===1?'':'s')"></span>
+              <button type="button" class="btn-primary" @click="cnSave()" :disabled="wfSaving">
                 <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
-                <span x-text="wfSaving ? 'Saving…' : 'Save'"></span>
+                <span x-text="wfSaving ? 'Saving…' : 'Save Workflow'"></span>
               </button>
             </div>
 
-            <template x-if="wfError">
-              <div class="banner banner-error" role="alert">
+            <template x-if="cnError">
+              <div class="banner banner-error cn-error-banner" role="alert">
                 <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
-                <span x-text="wfError"></span>
+                <span x-text="cnError"></span>
               </div>
             </template>
 
-            <div class="wf-form-section">
-              <label class="form-label"><span class="form-name">Name</span><span class="form-required">*</span></label>
-              <input type="text" class="form-input" x-model="wfForm.name" placeholder="My Workflow" autocomplete="off">
-            </div>
-
-            <div class="wf-form-section">
-              <label class="form-label"><span class="form-name">Trigger</span></label>
-              <select class="form-input" x-model="wfForm.triggerType">
-                <option value="manual">Manual</option>
-                <option value="cron">Cron schedule</option>
-                <option value="file-watch">File watch</option>
-              </select>
-              <template x-if="wfForm.triggerType === 'cron'">
-                <input type="text" class="form-input" x-model="wfForm.cronExpr" placeholder="0 8 * * 1-5  (min hour dom month dow)" autocomplete="off" spellcheck="false" style="margin-top:6px;font-family:var(--font-mono)">
-              </template>
-            </div>
-
-            <div class="wf-form-section">
-              <div class="wf-steps-header">
-                <span class="form-name">Steps</span>
-                <button type="button" class="btn-ghost" @click="wfAddStep()">
-                  <svg class="icon" aria-hidden="true"><use href="#i-folder-plus"/></svg>
-                  <span>Add step</span>
-                </button>
-              </div>
-              <template x-for="(step, si) in wfForm.steps" :key="si">
-                <div class="wf-step-card">
-                  <div class="wf-step-header">
-                    <span class="wf-step-num" x-text="'Step ' + (si + 1)"></span>
-                    <button type="button" class="btn-ghost wf-step-del" @click="wfRemoveStep(si)" :disabled="wfForm.steps.length <= 1" title="Remove step">
-                      <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>
-                    </button>
-                  </div>
-                  <label class="form-label"><span class="form-name">Script</span><span class="form-required">*</span></label>
-                  <select class="form-input" x-model="wfForm.steps[si].scriptId">
-                    <option value="" disabled>— pick a script —</option>
-                    <template x-for="it in items" :key="it.id">
-                      <option :value="it.path" x-text="it.name + '  (' + it.kind + ')'"></option>
-                    </template>
-                  </select>
-                  <div class="wf-step-routing" x-show="wfForm.steps.length > 1">
-                    <label class="form-label" style="flex:1"><span class="form-name">On success</span>
-                      <select class="form-input" x-model="wfForm.steps[si].onSuccess">
-                        <option value="next">next step</option>
-                        <option value="stop">stop</option>
-                        <template x-for="(other, oi) in wfForm.steps" :key="oi">
-                          <template x-if="oi !== si">
-                            <option :value="other.id" x-text="'→ step ' + (oi + 1)"></option>
-                          </template>
-                        </template>
-                      </select>
-                    </label>
-                    <label class="form-label" style="flex:1"><span class="form-name">On failure</span>
-                      <select class="form-input" x-model="wfForm.steps[si].onFailure">
-                        <option value="stop">stop</option>
-                        <option value="next">next step</option>
-                        <template x-for="(other, oi) in wfForm.steps" :key="oi">
-                          <template x-if="oi !== si">
-                            <option :value="other.id" x-text="'→ step ' + (oi + 1)"></option>
-                          </template>
-                        </template>
-                      </select>
-                    </label>
-                  </div>
-                  <div class="wf-params-header">
-                    <span class="form-name" style="font-size:.8rem;color:var(--fg-muted)">Parameters</span>
-                    <button type="button" class="btn-ghost" style="font-size:.75rem;padding:2px 6px" @click="wfAddParam(si)">+ param</button>
-                  </div>
-                  <template x-for="(p, pi) in step.params" :key="pi">
-                    <div class="wf-param-row">
-                      <input type="text" class="form-input" x-model="wfForm.steps[si].params[pi].key" placeholder="Name" autocomplete="off" spellcheck="false" style="flex:1">
-                      <input type="text" class="form-input" x-model="wfForm.steps[si].params[pi].val" placeholder="Value or {{step-s1.stdout}}" autocomplete="off" spellcheck="false" style="flex:2;font-family:var(--font-mono);font-size:.8rem">
-                      <button type="button" class="btn-ghost" @click="wfRemoveParam(si, pi)" title="Remove param">
-                        <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
-                      </button>
+            <div class="cn-body">
+              <!-- Sidebar: script catalog -->
+              <div class="cn-sidebar">
+                <div class="cn-sidebar-head">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+                  <input type="search" class="cn-search" x-model="cnQuery" placeholder="Filter scripts…" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="cn-sidebar-list">
+                  <template x-if="cnFilteredItems.length === 0">
+                    <p class="cn-sidebar-empty">No scripts found.</p>
+                  </template>
+                  <template x-for="item in cnFilteredItems" :key="item.id">
+                    <div class="cn-sidebar-item"
+                         @pointerdown.prevent="cnSidebarPointerDown($event, item)"
+                         :title="item.path">
+                      <span class="cn-sidebar-kind" :class="'kind-' + item.kind" x-text="item.kind"></span>
+                      <span class="cn-sidebar-name" x-text="item.name"></span>
                     </div>
                   </template>
                 </div>
-              </template>
+                <p class="cn-sidebar-hint">Drag scripts onto the canvas →</p>
+              </div>
+
+              <!-- Main canvas -->
+              <div class="cn-canvas-wrap"
+                   x-ref="cnWrap"
+                   @pointerdown="cnWrapPointerDown($event)"
+                   @pointermove="cnWrapPointerMove($event)"
+                   @pointerup="cnWrapPointerUp($event)"
+                   @wheel.prevent="cnWrapWheel($event)">
+
+                <!-- Nodes layer (absolutely positioned, transformed via CSS) -->
+                <div class="cn-nodes-layer" :style="cnTransformStyle">
+                  <template x-for="node in cnNodes" :key="node.id">
+                    <div class="cn-node"
+                         :class="{ 'cn-node-selected': cnSelNode === node.id }"
+                         :style="'left:' + node.x + 'px;top:' + node.y + 'px'"
+                         :data-nodeid="node.id"
+                         @pointerdown.stop="cnWrapPointerDown($event)">
+                      <!-- Input port -->
+                      <div class="cn-port cn-port-in" data-port="in" :data-nodeid="node.id"></div>
+                      <!-- Node body -->
+                      <div class="cn-node-body" @click.stop="cnSelectNode(node.id, $event)">
+                        <span class="cn-node-kind" :class="'kind-' + (node.scriptId||'').endsWith('.exe') ? 'kind-exe' : 'kind-ps1'">ps1</span>
+                        <span class="cn-node-name" x-text="node.scriptName || node.scriptId.split(/[\\\/]/).pop()"></span>
+                        <button type="button" class="cn-node-del" @click.stop="cnRemoveNode(node.id)" title="Remove node">
+                          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+                        </button>
+                      </div>
+                      <!-- Output ports -->
+                      <div class="cn-ports-out">
+                        <div class="cn-port cn-port-success" data-port="success" :data-nodeid="node.id" title="On success"></div>
+                        <div class="cn-port cn-port-failure" data-port="failure" :data-nodeid="node.id" title="On failure"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- SVG layer: edges only -->
+                <svg class="cn-svg" aria-hidden="true">
+                  <defs>
+                    <marker id="arrowhead-success" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L8,3 z" fill="#4ec588"/>
+                    </marker>
+                    <marker id="arrowhead-failure" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L8,3 z" fill="#e8546a"/>
+                    </marker>
+                  </defs>
+                  <g :transform="cnSvgTransform">
+                    <!-- Committed edges -->
+                    <template x-for="edge in cnEdges" :key="edge.id">
+                      <path
+                        :d="cnBezier(edge)"
+                        :stroke="cnEdgeColor(edge)"
+                        :class="{ 'cn-edge-selected': cnSelEdge === edge.id }"
+                        class="cn-edge"
+                        :marker-end="'url(#arrowhead-' + edge.fromPort + ')'"
+                        :data-edgeid="edge.id"
+                        @click.stop="cnSelEdge = edge.id; cnSelNode = null"
+                        fill="none"
+                        stroke-width="2"/>
+                    </template>
+                    <!-- Rubber-band edge in progress -->
+                    <template x-if="cnDrawEdge">
+                      <path
+                        :d="cnRubberBand()"
+                        :stroke="cnDrawEdge.fromPort === 'success' ? '#4ec588' : '#e8546a'"
+                        stroke-width="1.5" stroke-dasharray="5,4" fill="none"
+                        style="pointer-events:none"/>
+                    </template>
+                  </g>
+                </svg>
+
+                <!-- Ghost node while dragging from sidebar -->
+                <template x-if="cnDragScript">
+                  <div class="cn-ghost-node" :style="'left:' + cnDragScript.gx + 'px;top:' + cnDragScript.gy + 'px'" style="pointer-events:none">
+                    <span x-text="cnDragScript.script.name"></span>
+                  </div>
+                </template>
+
+                <!-- Empty state -->
+                <template x-if="cnNodes.length === 0 && !cnDragScript">
+                  <div class="cn-empty-hint">
+                    <svg class="icon-xl" aria-hidden="true"><use href="#i-bolt"/></svg>
+                    <p>Drag scripts from the left panel onto the canvas</p>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Side panel: selected node params -->
+              <div class="cn-side-panel" x-show="cnSelNode && cnSelectedNodeObj">
+                <div class="cn-side-head">
+                  <strong x-text="cnSelectedNodeObj && cnSelectedNodeObj.scriptName"></strong>
+                  <span class="cn-step-id" x-text="cnSelectedNodeObj && cnSelectedNodeObj.stepId"></span>
+                </div>
+                <template x-if="cnNodeSchemaLoading">
+                  <p class="cn-side-loading">Loading params…</p>
+                </template>
+                <template x-if="!cnNodeSchemaLoading && cnNodeSchema && cnNodeSchema.mode === 'typed'">
+                  <div class="cn-params-form">
+                    <template x-if="!cnNodeSchema.fields || !cnNodeSchema.fields.length">
+                      <p class="cn-params-none">No parameters.</p>
+                    </template>
+                    <template x-for="field in (cnNodeSchema.fields || [])" :key="field.name">
+                      <div class="cn-param-field">
+                        <label class="form-label">
+                          <span class="form-name" x-text="field.name"></span>
+                          <span class="form-required" x-show="field.required">*</span>
+                        </label>
+                        <template x-if="field.widget === 'checkbox' || field.widget === 'checkbox-switch'">
+                          <input type="checkbox" class="form-checkbox" :checked="cnSelectedNodeObj && !!cnSelectedNodeObj.params[field.name]" @change="if(cnSelectedNodeObj) cnSelectedNodeObj.params[field.name] = $event.target.checked">
+                        </template>
+                        <template x-if="field.widget === 'number'">
+                          <input type="number" class="form-input" :value="cnSelectedNodeObj && cnSelectedNodeObj.params[field.name]" @input="if(cnSelectedNodeObj) cnSelectedNodeObj.params[field.name] = +$event.target.value" :min="field.min" :max="field.max">
+                        </template>
+                        <template x-if="field.widget === 'dropdown'">
+                          <select class="form-input" :value="cnSelectedNodeObj && cnSelectedNodeObj.params[field.name]" @change="if(cnSelectedNodeObj) cnSelectedNodeObj.params[field.name] = $event.target.value">
+                            <option value="" disabled>— select —</option>
+                            <template x-for="opt in (field.options||[])" :key="opt"><option :value="opt" x-text="opt"></option></template>
+                          </select>
+                        </template>
+                        <template x-if="field.widget !== 'checkbox' && field.widget !== 'checkbox-switch' && field.widget !== 'number' && field.widget !== 'dropdown'">
+                          <input type="text" class="form-input" :value="cnSelectedNodeObj && cnSelectedNodeObj.params[field.name]" @input="if(cnSelectedNodeObj) cnSelectedNodeObj.params[field.name] = $event.target.value" :placeholder="field.default !== undefined ? String(field.default) : ''" autocomplete="off" spellcheck="false">
+                        </template>
+                        <p class="form-help" x-show="field.help" x-text="field.help"></p>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="!cnNodeSchemaLoading && cnNodeSchema && cnNodeSchema.mode === 'raw'">
+                  <div class="cn-params-form">
+                    <label class="form-label"><span class="form-name">Raw Arguments</span></label>
+                    <textarea class="form-input form-textarea" :value="cnSelectedNodeObj && (cnSelectedNodeObj.params.__rawArgs || '')" @input="if(cnSelectedNodeObj) cnSelectedNodeObj.params.__rawArgs = $event.target.value" placeholder="-Arg value" spellcheck="false"></textarea>
+                  </div>
+                </template>
+                <div class="cn-side-template-hint">
+                  <details>
+                    <summary>Template tokens</summary>
+                    <code>{{step-sN.stdout}}</code> last stdout line<br>
+                    <code>{{step-sN.stdout.all}}</code> all stdout<br>
+                    <code>{{step-sN.exitCode}}</code> exit code
+                  </details>
+                </div>
+              </div>
             </div>
           </div>
         </template>

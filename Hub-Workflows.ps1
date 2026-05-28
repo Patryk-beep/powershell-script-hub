@@ -159,6 +159,10 @@ function Test-WorkflowSchema {
         [void]$errors.Add('steps must be an array')
         return @{ ok = $false; errors = $errors.ToArray() }
     }
+    if ($steps.Count -gt 50) {
+        [void]$errors.Add('workflow exceeds maximum step count (50)')
+        return @{ ok = $false; errors = $errors.ToArray() }
+    }
 
     $stepIds = [System.Collections.Generic.List[string]]::new()
     for ($i = 0; $i -lt $steps.Count; $i++) {

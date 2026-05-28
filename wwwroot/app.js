@@ -1,8 +1,10 @@
 // Hub frontend — Alpine.js component.
 // Catalog browser with search/filter/sort + form-driven runner with SSE log stream.
+// Canvas editor state/methods come from canvasEditorMixin() in canvas-editor.js.
 
 function hubApp() {
   return {
+    ...canvasEditorMixin(),
     // ── Catalog state ───────────────────────────────────────────────
     items: [],
     warnings: [],
@@ -86,6 +88,7 @@ function hubApp() {
       this.bindKeyboard();
       this.bindLogAutoscroll();
       this.bindTabWatch();
+      window.addEventListener('keydown', (e) => this.cnKeyDown(e));
 
       await this.refreshConfig();
       await this.refreshItems();
@@ -512,25 +515,12 @@ function hubApp() {
     },
 
     wfNewForm() {
-      this.wfForm = { id: null, name: '', triggerType: 'manual', cronExpr: '', steps: [] };
-      this.wfAddStep();
-      this.wfSelected = null; this.wfEditMode = true; this.wfError = null;
+      this.cnOpenNew();
     },
 
     wfEditForm() {
       if (!this.wfSelected) return;
-      const wf = this.wfSelected;
-      this.wfForm = {
-        id: wf.id, name: wf.name || '',
-        triggerType: wf.trigger && wf.trigger.type ? wf.trigger.type : 'manual',
-        cronExpr: wf.trigger && wf.trigger.expression ? wf.trigger.expression : '',
-        steps: (wf.steps || []).map(s => ({
-          id: s.id, scriptId: s.scriptId || '',
-          onSuccess: s.onSuccess || 'next', onFailure: s.onFailure || 'stop',
-          params: Object.entries(s.params || {}).map(([k, v]) => ({ key: k, val: String(v) }))
-        }))
-      };
-      this.wfEditMode = true; this.wfError = null;
+      this.cnOpenWorkflow(this.wfSelected);
     },
 
     wfAddStep() {

@@ -38,8 +38,7 @@ function Stop-Hub {
 }
 
 function Start-HubProcess {
-    $args = @('-NoProfile', '-Sta', '-ExecutionPolicy', 'Bypass', '-File', $HubScript)
-    Start-Process pwsh -ArgumentList $args -PassThru -WindowStyle Hidden
+    Start-Process pwsh -ArgumentList "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$HubScript`"" -PassThru -WindowStyle Hidden
 }
 
 # === SETUP ===

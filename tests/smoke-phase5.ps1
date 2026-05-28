@@ -67,8 +67,8 @@ function Get-HubPortFromFile {
 
 function Start-HubProcess {
     param([string[]]$ExtraArgs)
-    $args = @('-NoProfile', '-Sta', '-ExecutionPolicy', 'Bypass', '-File', $HubScript) + $ExtraArgs
-    Start-Process pwsh -ArgumentList $args -PassThru -WindowStyle Hidden
+    $extra = if ($ExtraArgs) { ' ' + ($ExtraArgs -join ' ') } else { '' }
+    Start-Process pwsh -ArgumentList "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$HubScript`"$extra" -PassThru -WindowStyle Hidden
 }
 
 foreach ($f in @('hub-error.log','hub.port')) {

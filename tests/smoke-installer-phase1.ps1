@@ -55,8 +55,8 @@ function Stop-Hub {
 function Start-Hub {
     param([string[]]$ExtraArgs = @())
     Stop-Hub
-    $args = @('-NoProfile','-File',$HubSource) + $ExtraArgs
-    $Script:HubProc = Start-Process pwsh -ArgumentList $args -PassThru -WindowStyle Hidden
+    $extra = if ($ExtraArgs) { ' ' + ($ExtraArgs -join ' ') } else { '' }
+    $Script:HubProc = Start-Process pwsh -ArgumentList "-NoProfile -File `"$HubSource`"$extra" -PassThru -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds($BootTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         try {

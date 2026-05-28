@@ -43,7 +43,12 @@ $Script:StateRoutes      = @(
     '/api/run',
     '/api/jobs/.+?/kill',
     '/api/setup',
-    '/api/browse-folder'
+    '/api/browse-folder',
+    '/api/workflows',
+    '/api/workflows/.+?',
+    '/api/workflows/.+?/run',
+    '/api/workflow-runs/.+?/kill',
+    '/api/git-roots'
 )
 
 # Discovery surface: depth-1 (root + immediate subdirs). Hidden dirs (`.*`, `_*`) skipped.
@@ -95,6 +100,14 @@ if (-not (Test-Path -LiteralPath $Script:WwwRoot)) {
         'Hub - Setup error', 'OK', 'Error') | Out-Null
     exit 1
 }
+
+# Dot-source feature modules (ADV2-003: after all $Script: globals + config dir creation,
+# before any function definitions so modules can define functions at load time).
+. (Join-Path $Script:ScriptRoot 'Hub-Workflows.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-WorkflowEngine.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-Triggers.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-Git.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-History.ps1')
 
 function Write-HubError {
     param($Err)
@@ -242,8 +255,8 @@ function Invoke-SecurityMiddleware {
         }
     }
 
-    # CSRF token check for state routes
-    if (Test-IsStateRoute -Path $path) {
+    # CSRF token check for state routes (non-GET only — GET requests are read-only and never mutate state).
+    if ($req.HttpMethod -ne 'GET' -and (Test-IsStateRoute -Path $path)) {
         $cookie = Get-RequestCsrfCookie -Request $req
         $header = $req.Headers[$Script:CsrfHeader]
         if (-not $cookie -or -not $header -or $cookie -ne $header) {
@@ -1326,6 +1339,7 @@ function New-JobRecord {
         stderrTask    = $null
         stdoutEof     = $false
         stderrEof     = $false
+        workflowRunId = $null
     }
 }
 
@@ -1376,7 +1390,8 @@ function Start-HubJob {
         [string]$ItemPath,
         [string]$Kind,
         [string[]]$Argv = @(),
-        [string]$ItemId
+        [string]$ItemId,
+        [string]$WorkflowRunId = $null
     )
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -1417,6 +1432,7 @@ function Start-HubJob {
         $proc = [System.Diagnostics.Process]::Start($psi)
         try { $proc.StandardInput.Close() } catch { Write-HubError $_ }
         $job = New-JobRecord -JobId $jobId -ItemId $ItemId -Process $proc
+        if ($WorkflowRunId) { $job.workflowRunId = $WorkflowRunId }
         $Script:Jobs[$jobId] = $job
         return $jobId
     } catch {
@@ -1562,6 +1578,8 @@ function Step-Jobs {
         }
     }
 
+    Advance-WorkflowRuns
+
     $now = Get-Date
     if (($now - $Script:LastSweepAt).TotalSeconds -ge $Script:SweepIntervalSeconds) {
         Invoke-JobSweep
@@ -1590,7 +1608,7 @@ function Invoke-JobSweep {
     }
     # LRU cap
     if ($Script:Jobs.Count -gt $Script:JobLruCap) {
-        $terminal = @($Script:Jobs.Values | Where-Object { $_.status -in @('done','failed','killed') -and $_.subscribers.Count -eq 0 }) |
+        $terminal = @($Script:Jobs.Values | Where-Object { $_.status -in @('done','failed','killed') -and $_.subscribers.Count -eq 0 -and -not $_.workflowRunId }) |
             Sort-Object endedAt
         $excess = $Script:Jobs.Count - $Script:JobLruCap
         for ($i = 0; $i -lt $excess -and $i -lt $terminal.Count; $i++) {
@@ -1936,6 +1954,24 @@ function Invoke-Route {
             Invoke-KillRoute -Context $Context -JobId $matches[1]
             return $true
         }
+        if ($path -eq '/api/workflows') {
+            Invoke-WorkflowsRoute -Context $Context; return $true
+        }
+        if ($path -match '^/api/workflows/([^/]+)$') {
+            Invoke-WorkflowByIdRoute -Context $Context -WorkflowId $matches[1]; return $true
+        }
+        if ($path -match '^/api/workflows/([^/]+)/run$') {
+            Invoke-WorkflowRunTriggerRoute -Context $Context -WorkflowId $matches[1]; return $true
+        }
+        if ($path -match '^/api/workflow-runs/([^/]+)/stream$') {
+            return (Invoke-WorkflowRunStreamRoute -Context $Context -RunId $matches[1])
+        }
+        if ($path -match '^/api/workflow-runs/([^/]+)/kill$') {
+            Invoke-WorkflowRunKillRoute -Context $Context -RunId $matches[1]; return $true
+        }
+        if ($path -match '^/api/workflow-runs/([^/]+)$') {
+            return (Invoke-WorkflowRunRoute -Context $Context -RunId $matches[1])
+        }
         if ($path -like '/api/*') {
             Write-JsonResponse -Context $Context -Status 503 -Body @{ error = 'not-yet-implemented'; path = $path }
             return $true
@@ -2141,6 +2177,10 @@ if ($Script:NeedsSetup) {
         } catch { Write-HubError $_ }
     }
 }
+
+# Load persisted workflows from disk.
+Initialize-Workflows
+Initialize-WorkflowRuns
 
 try {
     $hubPort = Initialize-HubPort -Preferred $Script:Port

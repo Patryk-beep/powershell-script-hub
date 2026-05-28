@@ -38,7 +38,7 @@ function Stop-Hub {
 }
 
 function Start-HubProcess {
-    Start-Process pwsh -ArgumentList '-NoProfile','-Sta','-ExecutionPolicy','Bypass','-File',$HubScript,'-ExtraScanRoots',$Script:Fixtures -PassThru -WindowStyle Hidden
+    Start-Process pwsh -ArgumentList "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`"" -PassThru -WindowStyle Hidden
 }
 
 function Assert-Contains { param([string]$Hay,[string]$Needle,[string]$Label) if ($Hay -match [regex]::Escape($Needle)) { Write-Pass $Label } else { Write-Fail "$Label — missing '$Needle'" } }

@@ -40,14 +40,8 @@ function Stop-Hub {
 }
 
 function Start-HubProcess {
-    $args = @(
-        '-NoProfile', '-Sta', '-ExecutionPolicy', 'Bypass',
-        '-File', $HubScript,
-        '-ExtraScanRoots',  $Script:Fixtures,
-        '-FastTtlSeconds',  '3',
-        '-FastSweepSeconds','2'
-    )
-    Start-Process pwsh -ArgumentList $args -PassThru -WindowStyle Hidden
+    $argStr = "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`" -FastTtlSeconds 3 -FastSweepSeconds 2"
+    Start-Process pwsh -ArgumentList $argStr -PassThru -WindowStyle Hidden
 }
 
 function New-HubSession {

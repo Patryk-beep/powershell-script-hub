@@ -45,12 +45,7 @@ function Stop-Hub {
 }
 
 function Start-HubProcess {
-    $a = @(
-        '-NoProfile', '-Sta', '-ExecutionPolicy', 'Bypass',
-        '-File', $HubScript,
-        '-ExtraScanRoots', $Script:Fixtures
-    )
-    Start-Process pwsh -ArgumentList $a -PassThru -WindowStyle Hidden
+    Start-Process pwsh -ArgumentList "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`"" -PassThru -WindowStyle Hidden
 }
 
 function Assert-Contains {

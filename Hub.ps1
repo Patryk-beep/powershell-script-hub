@@ -492,7 +492,10 @@ function Read-HubConfig {
         $depthProp = $obj.PSObject.Properties['scanMaxDepth']
         $depth = if ($depthProp) { [int]$depthProp.Value } else { 1 }
 
-        return @{ version = $Script:ConfigVersion; scanRoots = $roots; scanMaxDepth = $depth }
+        $grProp   = $obj.PSObject.Properties['gitRoots']
+        $gitRoots = if ($grProp -and $grProp.Value) { @($grProp.Value) } else { @() }
+
+        return @{ version = $Script:ConfigVersion; scanRoots = $roots; scanMaxDepth = $depth; gitRoots = $gitRoots }
     } catch {
         Write-HubError $_
         return $null
@@ -535,6 +538,7 @@ function Get-EffectiveScanRoots {
     $roots = @()
     if ($Script:Config -and $Script:Config.scanRoots) { $roots = @($Script:Config.scanRoots) }
     if ($ExtraScanRoots) { $roots = $roots + @($ExtraScanRoots | Where-Object { $_ }) }
+    if ($Script:GitScanRoots -and $Script:GitScanRoots.Count -gt 0) { $roots = $roots + @($Script:GitScanRoots) }
     return @($roots | Where-Object { $_ })
 }
 
@@ -1574,11 +1578,13 @@ function Step-Jobs {
             }
             $job.endedAt = Get-Date
             Send-JobEnd -Job $job
+            Write-HubHistory -Job $job -WorkflowRunId $job.workflowRunId
             try { $job.process.Dispose() } catch { }
         }
     }
 
     Advance-WorkflowRuns
+    Advance-TriggerSchedules
 
     $now = Get-Date
     if (($now - $Script:LastSweepAt).TotalSeconds -ge $Script:SweepIntervalSeconds) {
@@ -1855,10 +1861,12 @@ function Invoke-SetupRoute {
         }
         if (-not $exists) { [void]$canonical.Add($full) }
     }
+    $gitRoots  = if ($Script:Config -and $Script:Config.ContainsKey('gitRoots')) { $Script:Config['gitRoots'] } else { @() }
     $newConfig = @{
         version      = $Script:ConfigVersion
         scanRoots    = @($canonical)
         scanMaxDepth = $Script:ScanMaxDepth
+        gitRoots     = $gitRoots
     }
     try {
         Write-HubConfig -Config $newConfig
@@ -1971,6 +1979,12 @@ function Invoke-Route {
         }
         if ($path -match '^/api/workflow-runs/([^/]+)$') {
             return (Invoke-WorkflowRunRoute -Context $Context -RunId $matches[1])
+        }
+        if ($path -eq '/api/git-roots') {
+            Invoke-GitRootsRoute -Context $Context; return $true
+        }
+        if ($path -eq '/api/history') {
+            Invoke-HistoryRoute -Context $Context; return $true
         }
         if ($path -like '/api/*') {
             Write-JsonResponse -Context $Context -Status 503 -Body @{ error = 'not-yet-implemented'; path = $path }
@@ -2181,6 +2195,9 @@ if ($Script:NeedsSetup) {
 # Load persisted workflows from disk.
 Initialize-Workflows
 Initialize-WorkflowRuns
+Initialize-TriggerStates
+Initialize-GitRoots
+Initialize-History
 
 try {
     $hubPort = Initialize-HubPort -Preferred $Script:Port

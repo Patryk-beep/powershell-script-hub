@@ -71,6 +71,8 @@ function Close-RunSseSubscribers {
         try { $sub.context.Response.Close() } catch { }
     }
     $Run.subscribers.Clear()
+    # Log workflow run completion to history (Hub-History.ps1 must be loaded).
+    try { Write-WorkflowRunHistory -Run $Run } catch { }
 }
 
 function Resolve-StepParams {

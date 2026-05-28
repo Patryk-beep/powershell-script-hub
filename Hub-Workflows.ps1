@@ -224,6 +224,16 @@ function Test-WorkflowSchema {
         [void]$errors.Add('workflow step graph contains a cycle (ADV-009)')
     }
 
+    # Trigger validation (delegates to Hub-Triggers.ps1 if loaded).
+    $trigger = $Wf['trigger']
+    if ($trigger -and $trigger -is [hashtable]) {
+        $testFn = Get-Command 'Test-TriggerSpec' -ErrorAction SilentlyContinue
+        if ($testFn) {
+            $trigErr = & $testFn -Trigger $trigger
+            if ($trigErr) { [void]$errors.Add($trigErr) }
+        }
+    }
+
     if ($errors.Count -gt 0) { return @{ ok = $false; errors = $errors.ToArray() } }
     return @{ ok = $true; errors = @() }
 }

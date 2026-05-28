@@ -44,6 +44,29 @@ function hubApp() {
     // ── Security ────────────────────────────────────────────────────
     csrfToken: '',
 
+    // ── Tab navigation ───────────────────────────────────────────────
+    activeTab: 'catalog',   // 'catalog' | 'workflows' | 'history'
+
+    // ── Workflow state ────────────────────────────────────────────────
+    workflows: [],
+    wfLoading: false,
+    wfSelected: null,       // workflow currently viewed
+    wfEditMode: false,      // true while editor form is open
+    wfForm: null,           // mutable form data during create/edit
+    wfSaving: false,
+    wfError: null,
+    wfRun: null,            // { runId, status, currentStepId, stepOutputs, childJobIds }
+    wfRunPolling: null,     // setInterval handle
+    wfRunLog: [],
+    wfRunEs: null,
+
+    // ── History state ─────────────────────────────────────────────────
+    histEntries: [],
+    histTotal: 0,
+    histOffset: 0,
+    histLimit: 50,
+    histLoading: false,
+
     // ── Command-K palette (P-ui-3) ──────────────────────────────────
     paletteOpen: false,
     paletteQuery: '',
@@ -62,6 +85,7 @@ function hubApp() {
 
       this.bindKeyboard();
       this.bindLogAutoscroll();
+      this.bindTabWatch();
 
       await this.refreshConfig();
       await this.refreshItems();
@@ -449,27 +473,229 @@ function hubApp() {
       return `${lines} value${lines === 1 ? '' : 's'} (${minLabel}-${maxLabel} allowed)`;
     },
 
+    // ── Tab / workflow / history ─────────────────────────────────────
+    bindTabWatch() {
+      this.$watch && this.$watch('activeTab', (tab) => {
+        if (tab === 'workflows') this.refreshWorkflows();
+        if (tab === 'history')   this.refreshHistory();
+      });
+    },
+
+    async switchTab(tab) {
+      this.activeTab = tab;
+      if (tab !== 'catalog' && this.selected) this.deselect();
+    },
+
+    // Workflows
+    async refreshWorkflows() {
+      this.wfLoading = true;
+      try {
+        const r = await fetch('/api/workflows', { headers: { Accept: 'application/json' } });
+        if (!r.ok) throw new Error(`/api/workflows ${r.status}`);
+        this.workflows = await r.json();
+      } catch (e) {
+        this.wfError = 'Load failed: ' + (e.message || e);
+      } finally { this.wfLoading = false; }
+    },
+
+    wfSelectItem(wf) {
+      this.wfSelected = wf; this.wfEditMode = false; this.wfError = null;
+      this.wfRun = null; this.wfRunLog = [];
+      this.closeWfStream();
+    },
+
+    wfBack() {
+      this.wfSelected = null; this.wfEditMode = false; this.wfForm = null; this.wfError = null;
+      this.wfRun = null; this.wfRunLog = [];
+      this.closeWfStream();
+      if (this.wfRunPolling) { clearInterval(this.wfRunPolling); this.wfRunPolling = null; }
+    },
+
+    wfNewForm() {
+      this.wfForm = { id: null, name: '', triggerType: 'manual', cronExpr: '', steps: [] };
+      this.wfAddStep();
+      this.wfSelected = null; this.wfEditMode = true; this.wfError = null;
+    },
+
+    wfEditForm() {
+      if (!this.wfSelected) return;
+      const wf = this.wfSelected;
+      this.wfForm = {
+        id: wf.id, name: wf.name || '',
+        triggerType: wf.trigger && wf.trigger.type ? wf.trigger.type : 'manual',
+        cronExpr: wf.trigger && wf.trigger.expression ? wf.trigger.expression : '',
+        steps: (wf.steps || []).map(s => ({
+          id: s.id, scriptId: s.scriptId || '',
+          onSuccess: s.onSuccess || 'next', onFailure: s.onFailure || 'stop',
+          params: Object.entries(s.params || {}).map(([k, v]) => ({ key: k, val: String(v) }))
+        }))
+      };
+      this.wfEditMode = true; this.wfError = null;
+    },
+
+    wfAddStep() {
+      if (!this.wfForm) return;
+      const n = this.wfForm.steps.length + 1;
+      this.wfForm.steps.push({ id: 's' + n, scriptId: '', onSuccess: 'next', onFailure: 'stop', params: [] });
+    },
+
+    wfRemoveStep(idx) { if (this.wfForm) this.wfForm.steps.splice(idx, 1); },
+
+    wfAddParam(stepIdx) {
+      this.wfForm.steps[stepIdx].params.push({ key: '', val: '' });
+    },
+
+    wfRemoveParam(stepIdx, pIdx) {
+      this.wfForm.steps[stepIdx].params.splice(pIdx, 1);
+    },
+
+    async wfSave() {
+      if (!this.wfForm) return;
+      this.wfSaving = true; this.wfError = null;
+      const body = {
+        name: this.wfForm.name.trim(),
+        trigger: this.wfForm.triggerType === 'cron'
+          ? { type: 'cron', expression: this.wfForm.cronExpr.trim() }
+          : { type: this.wfForm.triggerType },
+        steps: this.wfForm.steps.map(s => {
+          const params = {};
+          (s.params || []).forEach(p => { if (p.key) params[p.key] = p.val; });
+          const step = { id: s.id, scriptId: s.scriptId };
+          if (s.onSuccess && s.onSuccess !== 'next') step.onSuccess = s.onSuccess;
+          if (s.onFailure && s.onFailure !== 'stop') step.onFailure = s.onFailure;
+          if (Object.keys(params).length) step.params = params;
+          return step;
+        })
+      };
+      if (this.wfForm.id) body.id = this.wfForm.id;
+      try {
+        const r = await this.postJson('/api/workflows', body);
+        const data = await r.json();
+        if (!r.ok) { this.wfError = (data.details || [data.error]).join('; '); return; }
+        this.wfEditMode = false; this.wfForm = null;
+        await this.refreshWorkflows();
+        this.wfSelected = this.workflows.find(w => w.id === data.id) || data;
+      } catch (e) {
+        this.wfError = 'Save failed: ' + (e.message || e);
+      } finally { this.wfSaving = false; }
+    },
+
+    async wfDelete() {
+      if (!this.wfSelected) return;
+      if (!confirm('Delete workflow "' + this.wfSelected.name + '"?')) return;
+      try {
+        const r = await fetch('/api/workflows/' + this.wfSelected.id, {
+          method: 'DELETE', headers: { 'X-Hub-CSRF': this.csrfToken }
+        });
+        if (!r.ok) { this.wfError = 'Delete failed: HTTP ' + r.status; return; }
+        this.wfBack(); await this.refreshWorkflows();
+      } catch (e) { this.wfError = 'Delete failed: ' + (e.message || e); }
+    },
+
+    async wfTrigger() {
+      if (!this.wfSelected) return;
+      this.wfError = null; this.wfRunLog = []; this.closeWfStream();
+      try {
+        const r = await this.postJson('/api/workflows/' + this.wfSelected.id + '/run', {});
+        if (!r.ok) { const d = await r.json(); this.wfError = 'Run failed: ' + (d.error || r.status); return; }
+        const { runId } = await r.json();
+        this.wfRun = { runId, status: 'running', currentStepId: null, stepOutputs: {} };
+        this.wfStartPoll(runId);
+      } catch (e) { this.wfError = 'Run error: ' + (e.message || e); }
+    },
+
+    wfStartPoll(runId) {
+      if (this.wfRunPolling) clearInterval(this.wfRunPolling);
+      const poll = async () => {
+        try {
+          const r = await fetch('/api/workflow-runs/' + runId, { headers: { Accept: 'application/json' } });
+          if (!r.ok) return;
+          const run = await r.json();
+          this.wfRun = run;
+          if (run.status !== 'running') { clearInterval(this.wfRunPolling); this.wfRunPolling = null; }
+        } catch (e) { /* ignore poll errors */ }
+      };
+      this.wfRunPolling = setInterval(poll, 800);
+      poll();
+    },
+
+    async wfKill() {
+      if (!this.wfRun || this.wfRun.status !== 'running') return;
+      try {
+        await this.postJson('/api/workflow-runs/' + this.wfRun.runId + '/kill', {});
+      } catch (e) { /* ignore */ }
+    },
+
+    closeWfStream() {
+      if (this.wfRunEs) { try { this.wfRunEs.close(); } catch (e) {} this.wfRunEs = null; }
+    },
+
+    wfStepStatus(stepId) {
+      if (!this.wfRun) return 'pending';
+      const out = this.wfRun.stepOutputs && this.wfRun.stepOutputs[stepId];
+      if (out) return out.exitCode === 0 ? 'done' : 'failed';
+      if (this.wfRun.currentStepId === stepId && this.wfRun.status === 'running') return 'running';
+      return 'pending';
+    },
+
+    wfStepIds() {
+      return (this.wfSelected && this.wfSelected.steps || []).map(s => s.id);
+    },
+
+    // History
+    async refreshHistory() {
+      this.histLoading = true;
+      try {
+        const url = `/api/history?limit=${this.histLimit}&offset=${this.histOffset}`;
+        const r = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!r.ok) throw new Error('/api/history ' + r.status);
+        const d = await r.json();
+        this.histEntries = d.entries || []; this.histTotal = d.total || 0;
+      } catch (e) { /* non-fatal */ }
+      finally { this.histLoading = false; }
+    },
+
+    async histNextPage() { this.histOffset += this.histLimit; await this.refreshHistory(); },
+    async histPrevPage() { this.histOffset = Math.max(0, this.histOffset - this.histLimit); await this.refreshHistory(); },
+
+    histFormatDuration(ms) {
+      if (!ms && ms !== 0) return '';
+      if (ms < 1000) return ms + 'ms';
+      if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+      return Math.round(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+    },
+
     // ── Command-K palette (P-ui-3) ──────────────────────────────────
     get paletteResults() {
       const q = (this.paletteQuery || '').trim().toLowerCase();
       const base = this.items || [];
+      const wfs  = (this.workflows || []).map(w => ({ ...w, _isWorkflow: true }));
+      const all  = [...base, ...wfs];
       const filter = q
-        ? base.filter(it =>
+        ? all.filter(it =>
             (it.name || '').toLowerCase().includes(q) ||
             (it.description || '').toLowerCase().includes(q) ||
-            ((it.path || '').split(/[\\/]/).pop() || '').toLowerCase().includes(q))
-        : base;
+            (!it._isWorkflow && (it.path || '').split(/[\\/]/).pop().toLowerCase().includes(q)))
+        : all;
       return filter
         .slice()
         .sort((a, b) => (a.name || '').length - (b.name || '').length)
-        .slice(0, 10);
+        .slice(0, 12);
     },
 
     openPalette()  { this.paletteOpen = true; this.paletteQuery = ''; this.paletteIndex = 0; },
     closePalette() { this.paletteOpen = false; this.paletteQuery = ''; this.paletteIndex = 0; },
     selectPaletteItem() {
       const it = this.paletteResults[this.paletteIndex];
-      if (it) { this.selectItem(it); this.closePalette(); }
+      if (!it) return;
+      if (it._isWorkflow) {
+        this.activeTab = 'workflows';
+        this.$nextTick(() => this.wfSelectItem(it));
+      } else {
+        this.activeTab = 'catalog';
+        this.selectItem(it);
+      }
+      this.closePalette();
     },
     movePaletteIndex(delta) {
       const len = this.paletteResults.length;

@@ -76,19 +76,25 @@
 
     <span class="hub-spacer"></span>
 
-    <button class="back-btn" x-show="!selected" @click="openSetup()" type="button" aria-label="Open settings">
+    <div class="tab-nav" role="tablist">
+      <button type="button" class="tab-btn" :class="{ active: activeTab === 'catalog' }" @click="switchTab('catalog')" role="tab" :aria-selected="activeTab === 'catalog'">Catalog</button>
+      <button type="button" class="tab-btn" :class="{ active: activeTab === 'workflows' }" @click="switchTab('workflows')" role="tab" :aria-selected="activeTab === 'workflows'">Workflows</button>
+      <button type="button" class="tab-btn" :class="{ active: activeTab === 'history' }" @click="switchTab('history')" role="tab" :aria-selected="activeTab === 'history'">History</button>
+    </div>
+
+    <button class="back-btn" x-show="activeTab === 'catalog' && !selected" @click="openSetup()" type="button" aria-label="Open settings">
       <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
       <span>Settings</span>
     </button>
 
-    <button class="back-btn" x-show="selected" @click="deselect()" type="button" aria-label="Back to catalog">
+    <button class="back-btn" x-show="activeTab === 'catalog' && selected" @click="deselect()" type="button" aria-label="Back to catalog">
       <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
       <span>Back</span>
     </button>
   </header>
 
-  <!-- Toolbar (default view only) -->
-  <section class="toolbar" x-show="!selected" role="search">
+  <!-- Toolbar (catalog tab only) -->
+  <section class="toolbar" x-show="activeTab === 'catalog' && !selected" role="search">
     <label class="search-box">
       <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
       <input
@@ -172,6 +178,10 @@
   </template>
 
   <main>
+
+    <!-- ── Catalog tab ─────────────────────────────────────────────── -->
+    <template x-if="activeTab === 'catalog'">
+      <div>
 
     <!-- Loading -->
     <template x-if="!loaded">
@@ -285,7 +295,7 @@
       </template>
     </section>
 
-    <!-- Form pane -->
+    <!-- Form pane (catalog) -->
     <template x-if="selected">
       <section class="form-pane" aria-label="Run configuration">
         <header class="form-pane-header">
@@ -492,6 +502,266 @@
       </section>
     </template>
 
+      </div><!-- end catalog tab wrapper -->
+    </template>
+
+    <!-- ── Workflows tab ───────────────────────────────────────────── -->
+    <template x-if="activeTab === 'workflows'">
+      <div class="wf-panel">
+
+        <!-- Workflow list view -->
+        <template x-if="!wfEditMode && !wfSelected">
+          <div>
+            <div class="wf-toolbar">
+              <span class="wf-toolbar-title">Workflows</span>
+              <button type="button" class="btn-primary" @click="wfNewForm()">
+                <svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg>
+                <span>New Workflow</span>
+              </button>
+            </div>
+            <template x-if="wfLoading"><p class="empty">Loading…</p></template>
+            <template x-if="!wfLoading && workflows.length === 0">
+              <div class="empty">
+                <svg class="icon-xl"><use href="#i-bolt"/></svg>
+                <p class="empty-title">No workflows yet</p>
+                <p class="empty-detail">Create a workflow to chain scripts into pipelines.</p>
+              </div>
+            </template>
+            <div class="wf-list">
+              <template x-for="wf in workflows" :key="wf.id">
+                <div class="wf-card" @click="wfSelectItem(wf)" role="button" tabindex="0" @keydown.enter.prevent="wfSelectItem(wf)">
+                  <div class="wf-card-title" x-text="wf.name || wf.id"></div>
+                  <div class="wf-card-meta">
+                    <span class="badge" x-text="(wf.steps || []).length + ' step' + ((wf.steps || []).length === 1 ? '' : 's')"></span>
+                    <span class="badge" x-show="wf.trigger && wf.trigger.type !== 'manual'" x-text="wf.trigger && wf.trigger.type"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Workflow editor form -->
+        <template x-if="wfEditMode && wfForm">
+          <div class="wf-editor">
+            <div class="wf-toolbar">
+              <button type="button" class="btn-ghost" @click="wfEditMode = false; wfForm = null" :disabled="wfSaving">
+                <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+                <span>Cancel</span>
+              </button>
+              <span class="wf-toolbar-title" x-text="wfForm.id ? 'Edit Workflow' : 'New Workflow'"></span>
+              <button type="button" class="btn-primary" @click="wfSave()" :disabled="wfSaving || !wfForm.name.trim()">
+                <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
+                <span x-text="wfSaving ? 'Saving…' : 'Save'"></span>
+              </button>
+            </div>
+
+            <template x-if="wfError">
+              <div class="banner banner-error" role="alert">
+                <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+                <span x-text="wfError"></span>
+              </div>
+            </template>
+
+            <div class="wf-form-section">
+              <label class="form-label"><span class="form-name">Name</span><span class="form-required">*</span></label>
+              <input type="text" class="form-input" x-model="wfForm.name" placeholder="My Workflow" autocomplete="off">
+            </div>
+
+            <div class="wf-form-section">
+              <label class="form-label"><span class="form-name">Trigger</span></label>
+              <select class="form-input" x-model="wfForm.triggerType">
+                <option value="manual">Manual</option>
+                <option value="cron">Cron schedule</option>
+                <option value="file-watch">File watch</option>
+              </select>
+              <template x-if="wfForm.triggerType === 'cron'">
+                <input type="text" class="form-input" x-model="wfForm.cronExpr" placeholder="0 8 * * 1-5  (min hour dom month dow)" autocomplete="off" spellcheck="false" style="margin-top:6px;font-family:var(--font-mono)">
+              </template>
+            </div>
+
+            <div class="wf-form-section">
+              <div class="wf-steps-header">
+                <span class="form-name">Steps</span>
+                <button type="button" class="btn-ghost" @click="wfAddStep()">
+                  <svg class="icon" aria-hidden="true"><use href="#i-folder-plus"/></svg>
+                  <span>Add step</span>
+                </button>
+              </div>
+              <template x-for="(step, si) in wfForm.steps" :key="si">
+                <div class="wf-step-card">
+                  <div class="wf-step-header">
+                    <span class="wf-step-num" x-text="'Step ' + (si + 1)"></span>
+                    <button type="button" class="btn-ghost wf-step-del" @click="wfRemoveStep(si)" :disabled="wfForm.steps.length <= 1" title="Remove step">
+                      <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>
+                    </button>
+                  </div>
+                  <label class="form-label"><span class="form-name">Script</span><span class="form-required">*</span></label>
+                  <select class="form-input" x-model="wfForm.steps[si].scriptId">
+                    <option value="" disabled>— pick a script —</option>
+                    <template x-for="it in items" :key="it.id">
+                      <option :value="it.path" x-text="it.name + '  (' + it.kind + ')'"></option>
+                    </template>
+                  </select>
+                  <div class="wf-step-routing" x-show="wfForm.steps.length > 1">
+                    <label class="form-label" style="flex:1"><span class="form-name">On success</span>
+                      <select class="form-input" x-model="wfForm.steps[si].onSuccess">
+                        <option value="next">next step</option>
+                        <option value="stop">stop</option>
+                        <template x-for="(other, oi) in wfForm.steps" :key="oi">
+                          <template x-if="oi !== si">
+                            <option :value="other.id" x-text="'→ step ' + (oi + 1)"></option>
+                          </template>
+                        </template>
+                      </select>
+                    </label>
+                    <label class="form-label" style="flex:1"><span class="form-name">On failure</span>
+                      <select class="form-input" x-model="wfForm.steps[si].onFailure">
+                        <option value="stop">stop</option>
+                        <option value="next">next step</option>
+                        <template x-for="(other, oi) in wfForm.steps" :key="oi">
+                          <template x-if="oi !== si">
+                            <option :value="other.id" x-text="'→ step ' + (oi + 1)"></option>
+                          </template>
+                        </template>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="wf-params-header">
+                    <span class="form-name" style="font-size:.8rem;color:var(--fg-muted)">Parameters</span>
+                    <button type="button" class="btn-ghost" style="font-size:.75rem;padding:2px 6px" @click="wfAddParam(si)">+ param</button>
+                  </div>
+                  <template x-for="(p, pi) in step.params" :key="pi">
+                    <div class="wf-param-row">
+                      <input type="text" class="form-input" x-model="wfForm.steps[si].params[pi].key" placeholder="Name" autocomplete="off" spellcheck="false" style="flex:1">
+                      <input type="text" class="form-input" x-model="wfForm.steps[si].params[pi].val" placeholder="Value or {{step-s1.stdout}}" autocomplete="off" spellcheck="false" style="flex:2;font-family:var(--font-mono);font-size:.8rem">
+                      <button type="button" class="btn-ghost" @click="wfRemoveParam(si, pi)" title="Remove param">
+                        <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+                      </button>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Workflow detail / run view -->
+        <template x-if="!wfEditMode && wfSelected">
+          <div>
+            <div class="wf-toolbar">
+              <button type="button" class="btn-ghost" @click="wfBack()">
+                <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+                <span>Back</span>
+              </button>
+              <span class="wf-toolbar-title" x-text="wfSelected.name"></span>
+              <button type="button" class="btn-ghost" @click="wfEditForm()" title="Edit">
+                <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
+              </button>
+              <button type="button" class="btn-danger" @click="wfDelete()" title="Delete">
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>
+              </button>
+              <button type="button" class="btn-primary" @click="wfTrigger()" :disabled="wfRun && wfRun.status === 'running'">
+                <svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>
+                <span>Run</span>
+              </button>
+              <button type="button" class="btn-danger" x-show="wfRun && wfRun.status === 'running'" @click="wfKill()">
+                <svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>
+                <span>Kill</span>
+              </button>
+            </div>
+
+            <template x-if="wfError">
+              <div class="banner banner-error" role="alert">
+                <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+                <span x-text="wfError"></span>
+              </div>
+            </template>
+
+            <!-- Step progress -->
+            <div class="wf-steps-progress">
+              <template x-for="(step, si) in (wfSelected.steps || [])" :key="step.id">
+                <div class="wf-step-progress" :class="'wf-step-' + wfStepStatus(step.id)">
+                  <span class="wf-step-idx" x-text="si + 1"></span>
+                  <span class="wf-step-name" x-text="step.id"></span>
+                  <span class="wf-step-status-badge" x-text="wfStepStatus(step.id)"></span>
+                </div>
+              </template>
+            </div>
+
+            <!-- Run status banner -->
+            <template x-if="wfRun">
+              <div class="banner" :class="{'banner-error': wfRun.status === 'failed' || wfRun.status === 'killed', 'banner-ok': wfRun.status === 'done', 'banner-info': wfRun.status === 'running'}">
+                <svg class="icon" aria-hidden="true"><use :href="wfRun.status === 'done' ? '#i-check' : wfRun.status === 'running' ? '#i-clock' : '#i-alert'"/></svg>
+                <span>Run <code x-text="wfRun.runId && wfRun.runId.slice(-8)"></code> — <strong x-text="wfRun.status"></strong></span>
+              </div>
+            </template>
+
+            <!-- Workflow steps summary -->
+            <div class="wf-step-list">
+              <template x-for="(step, si) in (wfSelected.steps || [])" :key="step.id">
+                <div class="wf-step-detail">
+                  <span class="wf-step-idx">S<span x-text="si + 1"></span></span>
+                  <div class="wf-step-info">
+                    <span class="wf-step-script" x-text="step.scriptId.split(/[\\/]/).pop()"></span>
+                    <span class="wf-step-route" x-show="step.onSuccess || step.onFailure">
+                      <span x-show="step.onSuccess" x-text="'✓ → ' + (step.onSuccess || 'next')"></span>
+                      <span x-show="step.onFailure" x-text="' ✗ → ' + (step.onFailure || 'stop')"></span>
+                    </span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <!-- ── History tab ──────────────────────────────────────────────── -->
+    <template x-if="activeTab === 'history'">
+      <div class="hist-panel">
+        <div class="wf-toolbar">
+          <span class="wf-toolbar-title">Run History</span>
+          <a class="btn-ghost" :href="'/api/history?format=csv&limit=500'" download="hub-history.csv">
+            <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
+            <span>Export CSV</span>
+          </a>
+        </div>
+        <template x-if="histLoading"><p class="empty">Loading…</p></template>
+        <template x-if="!histLoading && histEntries.length === 0">
+          <div class="empty">
+            <svg class="icon-xl"><use href="#i-clock"/></svg>
+            <p class="empty-title">No run history yet</p>
+          </div>
+        </template>
+        <template x-if="histEntries.length > 0">
+          <div>
+            <table class="hist-table">
+              <thead>
+                <tr><th>Time</th><th>Script/Workflow</th><th>Status</th><th>Exit</th><th>Duration</th></tr>
+              </thead>
+              <tbody>
+                <template x-for="(e, idx) in histEntries" :key="idx">
+                  <tr>
+                    <td class="hist-ts" x-text="formatMtime(e.ts)"></td>
+                    <td class="hist-id" x-text="e.workflowId ? '⚡ wf' : '⬡ ' + (e.itemId || '—')"></td>
+                    <td><span class="badge" :class="{ 'badge-ok': e.status === 'done', 'badge-err': e.status === 'failed' || e.status === 'killed' }" x-text="e.status"></span></td>
+                    <td x-text="e.exitCode !== null && e.exitCode !== undefined ? e.exitCode : '—'"></td>
+                    <td x-text="histFormatDuration(e.durationMs)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="hist-pagination">
+              <button type="button" class="btn-ghost" @click="histPrevPage()" :disabled="histOffset === 0">← Prev</button>
+              <span x-text="(histOffset + 1) + '–' + Math.min(histOffset + histLimit, histTotal) + ' of ' + histTotal"></span>
+              <button type="button" class="btn-ghost" @click="histNextPage()" :disabled="histOffset + histLimit >= histTotal">Next →</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
   </main>
 
   <!-- Setup modal -->
@@ -584,8 +854,9 @@
               @mouseenter="paletteIndex = idx">
               <span class="palette-item-name" x-text="item.name"></span>
               <span class="palette-item-meta">
-                <span class="badge" x-text="item.kind"></span>
-                <span class="palette-item-path" x-text="item.path" :title="item.path"></span>
+                <span class="badge" x-text="item._isWorkflow ? 'workflow' : item.kind"></span>
+                <span class="palette-item-path" x-show="!item._isWorkflow" x-text="item.path" :title="item.path"></span>
+                <span class="palette-item-path" x-show="item._isWorkflow" x-text="(item.steps || []).length + ' steps'"></span>
               </span>
             </li>
           </template>

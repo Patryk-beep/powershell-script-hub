@@ -88,7 +88,10 @@ Modified:
   `Invoke-RunRoute` *and* the workflow engine before `Start-HubJob`; change spawn to
   pass secrets via **stdin**, not argv (see Step 4).
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\Hub-WorkflowEngine.ps1` — resolve
-  secret refs for each step before `Build-Argv`/`Start-HubJob` (L117–119, L193–195).
+  secret refs for each step before `Build-Argv`/`Start-HubJob` (L117–119, L193–195);
+  **track secret-bearing steps and make `Resolve-StepParams` (≈L88-91) drop their
+  `{{step-N.stdout(.all)}}` refs to empty (ADV-301)** so an echoed secret can't reach a
+  downstream argv.
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\wwwroot\app.js` (or the existing
   Alpine root + canvas-editor.js) — Secrets tab UI, password-field secret dropdown,
   export button, import dialog + trust warning.
@@ -141,6 +144,37 @@ Modified:
 - **How-to-verify:** A short written red-team note is produced; each of the 7 items has a
   decision; Steps 1–8 below are updated to match before implementation starts.
 
+### Step 0.5 — Adversary findings folded (REVISE verdict, 2026-05-30)
+
+The Step 0 red-team returned **REVISE**. Findings now binding on the steps below:
+
+- **[ADV-301 — CRITICAL] Template substitution re-exposes an echoed secret on a DOWNSTREAM
+  step's argv.** `Resolve-StepParams` (Hub-WorkflowEngine.ps1 ≈L88-91) substitutes
+  `{{step-N.stdout}}`/`.stdout.all` into the next step's param values → `Build-Argv` → argv
+  (≈L194-195). If a secret-consuming step's script echoes the secret to stdout, the template
+  engine lands it on the next step's command line — defeating stdin injection in the workflow
+  path. **MANDATORY:** the run must track which steps resolved ≥1 secret ("secret-bearing");
+  `Resolve-StepParams` MUST treat `{{step-N.stdout}}`/`.stdout.all` for a secret-bearing step
+  N as **empty** (drop the ref) and surface a warning. `.exitCode` refs remain allowed. Add a
+  smoke assertion: a 2-step workflow where step 1 (secret-bound) echoes its secret and step 2
+  uses `{{step-s1.stdout}}` → step 2's `Win32_Process.CommandLine` MUST NOT contain the secret.
+- **[ADV-302 — HIGH] Shim MUST propagate exit code.** `pwsh -Command "& $target …"` exits 0
+  regardless of the target's `exit N`. The shim MUST end with `exit $LASTEXITCODE` or secret
+  runs misreport status (breaks history, run-finished toast, and workflow `onFailure` routing).
+  Smoke: secret run of an `exit 3` fixture reports exit 3.
+- **[ADV-303 — HIGH] stdin payload schema (per-param kind+username).** The stdin JSON is
+  `{ "<param>": { "kind":"password|credential", "value":"…", "username":"…|null" } }` (NOT
+  bare `{param:value}`). Shim builds `[securestring]` for password/securestring and
+  `[pscredential]` (username + securestring) for credential. **Fail closed** (error, never
+  argv fallback) on unknown kind or missing username for a credential.
+- **[ADV-304 — HIGH] Secret value size cap.** `POST/PUT /api/secrets` rejects a `value`
+  longer than **64 KB** with 413/422 (bounds DPAPI blob + stdin payload).
+- **[ADV-305 — MED] `-File`→`& $target` parity.** Secret runs invoke via `& <target>` in the
+  shim process. `& 'script.ps1'` sets `$PSScriptRoot`/`$PSCommandPath` correctly; still add a
+  fixture asserting a secret run and a non-secret run of the same script behave identically.
+- **[ADV-306 — MED] `@secret:` is typed-mode only.** In raw mode it is passed literally (no
+  resolution, no leak). Document; UI shows a note when raw mode is active.
+
 ### Step 1 — `Hub-Secrets.ps1`: storage layer + name validation
 
 - **What:** Define vault dir, name rules, DPAPI encrypt/decrypt, and a per-secret file
@@ -185,7 +219,8 @@ Modified:
     (mirror `Hub-Workflows.ps1` ≈L251–253) — a piped empty array becomes JSON `null`, which
     breaks the UI's `.map()`.
   - `POST /api/secrets` (state route) → body `{ name, kind, value, username? }`; validate
-    name; encrypt `value`; write file; return metadata (no value). Duplicate name ⇒ 409.
+    name; **reject `value` longer than 64 KB ⇒ 413 (ADV-304)**; encrypt `value`; write file;
+    return metadata (no value). Duplicate name ⇒ 409.
   - `PUT /api/secrets/{name}` (state route) → rename and/or rotate value. Rename =
     metadata change + file re-key (new hash filename, delete old). Rotate = re-encrypt.
   - `DELETE /api/secrets/{name}` (state route) → delete file. 404 if absent.
@@ -230,12 +265,17 @@ Modified:
     `[securestring]`/`[pscredential]` without touching argv:
     - `FileName = pwsh`; argv = `-NoProfile -NonInteractive -ExecutionPolicy Bypass
       -Command <shim>` where `<shim>` is a fixed, Hub-authored one-liner that:
-      1. reads a single JSON line from `[Console]::In` (the secret map: `{param:value}`),
-      2. converts each to `ConvertTo-SecureString -AsPlainText -Force` (and to
-         `PSCredential` when the schema kind is credential, using the stored username),
-      3. splats them plus the non-secret argv into `& <targetScript> @bound`.
+      1. reads a single JSON line from `[Console]::In` — payload (ADV-303):
+         `{ "<param>": { "kind":"password|credential", "value":"…", "username":"…|null" } }`,
+      2. for each: `ConvertTo-SecureString -AsPlainText -Force`; if `kind -eq 'credential'`
+         build `[pscredential]::new($username, $secure)`. **Fail closed** — unknown kind or a
+         credential with no username throws (NEVER fall back to argv),
+      3. splats them plus the non-secret argv into `& <targetScript> @nonSecretArgs @secretParams`,
+      4. **`exit $LASTEXITCODE` (ADV-302)** so the target's exit code propagates (else secret
+         runs always report 0 → wrong history/toast/onFailure routing).
     - The shim text is constant (no user input interpolated into it). The secret JSON is
-      written to `$proc.StandardInput`, then stdin closed.
+      written to `$proc.StandardInput`, then stdin closed. Non-secret argv is passed as
+      normal argv after `-Command <shim>` (becomes `$args` in the shim scope).
   - Non-secret params for secret runs still travel as argv (they are not sensitive).
   - The plaintext secret JSON string is the only place plaintext lives in Hub; clear the
     variable (`$secretJson = $null`) immediately after `WriteLine`.
@@ -469,6 +509,11 @@ Other risks:
       (each asserted by a smoke test).
 - [ ] Secret runs inject via stdin; plaintext is provably absent from every child
       `Win32_Process.CommandLine`.
+- [ ] **ADV-301:** a secret-bearing step's `{{step-N.stdout}}` refs are dropped — smoke proves
+      an echoed secret never reaches a downstream step's `Win32_Process.CommandLine`.
+- [ ] **ADV-302:** secret run of an `exit 3` fixture reports exit 3 (shim `exit $LASTEXITCODE`).
+- [ ] **ADV-303/304:** stdin payload carries per-param kind+username, fails closed on bad kind;
+      secret value > 64 KB rejected.
 - [ ] `securestring`/`pscredential`/`password` params bind the resolved secret correctly
       (fixture verifies received value via hash).
 - [ ] Workflow export produces a `.hubflow` with canvas, no values; import forces a fresh

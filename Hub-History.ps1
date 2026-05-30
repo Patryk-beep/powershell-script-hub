@@ -102,7 +102,12 @@ function Read-HubHistory {
         [string]$WorkflowId = ''
     )
     $path = Get-HistoryFilePath
-    if (-not [System.IO.File]::Exists($path)) { return @() }
+    # Fresh install / no history yet: return the SAME shape as the populated path so
+    # clients (and the History tab) always get {entries,total,...} — never a bare null.
+    # (A bare @() here serializes to JSON `null` via Write-JsonResponse's pipeline.)
+    if (-not [System.IO.File]::Exists($path)) {
+        return @{ entries = @(); total = 0; limit = $Limit; offset = $Offset }
+    }
     $lines = [System.IO.File]::ReadAllLines($path, [System.Text.Encoding]::UTF8)
     # Reverse (newest first).
     [System.Array]::Reverse($lines)

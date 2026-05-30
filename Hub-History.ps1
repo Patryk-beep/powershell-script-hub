@@ -39,9 +39,15 @@ function Write-HubHistory {
         durationMs    = if ($Job.endedAt -and $Job.startedAt) { [int]($Job.endedAt - $Job.startedAt).TotalMilliseconds } else { 0 }
         workflowRunId = $WorkflowRunId
         workflowId    = $WorkflowId
+        # Phase 2 (additive): redacted params for "re-run from history". $Job.values is
+        # ALREADY secret-stripped (Remove-SecretValues at run time). The raw string is
+        # never stored — only the boolean. itemName for display when the catalog changes.
+        params        = if ($Job.ContainsKey('values'))      { $Job.values }      else { @{} }
+        rawArgsUsed   = if ($Job.ContainsKey('rawArgsUsed')) { [bool]$Job.rawArgsUsed } else { $false }
+        itemName      = if ($Job.ContainsKey('itemName'))    { [string]$Job.itemName } else { '' }
     }
     try {
-        $line  = $entry | ConvertTo-Json -Depth 3 -Compress
+        $line  = $entry | ConvertTo-Json -Depth 5 -Compress
         $path  = Get-HistoryFilePath
         [System.IO.File]::AppendAllText($path, $line + "`n", [System.Text.UTF8Encoding]::new($false))
         Invoke-HistoryRotation -Path $path

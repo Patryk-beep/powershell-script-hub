@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$Script:Version          = '1.5.0.0'
+$Script:Version          = '1.6.0.0'
 $Script:Port             = if ($Port -gt 0) { $Port } else { 8765 }
 $Script:Listener         = $null
 $Script:ListenerHealthy  = $true
@@ -54,7 +54,9 @@ $Script:StateRoutes      = @(
     '/api/workflows/.+?',
     '/api/workflows/.+?/run',
     '/api/workflow-runs/.+?/kill',
-    '/api/git-roots'
+    '/api/git-roots',
+    '/api/presets',
+    '/api/presets/.+?'
 )
 
 # Discovery surface: depth-1 (root + immediate subdirs). Hidden dirs (`.*`, `_*`) skipped.
@@ -114,6 +116,7 @@ if (-not (Test-Path -LiteralPath $Script:WwwRoot)) {
 . (Join-Path $Script:ScriptRoot 'Hub-Triggers.ps1')
 . (Join-Path $Script:ScriptRoot 'Hub-Git.ps1')
 . (Join-Path $Script:ScriptRoot 'Hub-History.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-Presets.ps1')
 
 function Write-HubError {
     param($Err)
@@ -1329,6 +1332,78 @@ function Build-Argv {
     return ,$argv.ToArray()
 }
 
+function Remove-SecretValues {
+    # Returns a CLONE of $Values with secret fields removed. Secret = a live-schema field
+    # whose widget is 'password' (securestring/pscredential) OR whose NAME matches the
+    # conventional secret heuristic (ADV-201 — widget alone misses plain [string]$ApiKey).
+    # Used at every persistence boundary (presets save, history logging) so credentials
+    # never reach disk. Residual limit: a non-matching plain-string secret still persists.
+    [OutputType([hashtable])]
+    param([hashtable]$Schema, [hashtable]$Values)
+    $out = @{}
+    if (-not $Values) { return $out }
+    $secretNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    if ($Schema -and $Schema.fields) {
+        foreach ($f in @($Schema.fields)) {
+            if ($f.widget -eq 'password') { [void]$secretNames.Add([string]$f.name) }
+        }
+    }
+    $nameHeuristic = '(?i)pass(word)?|secret|token|api[-_]?key|cred(ential)?|client[-_]?secret|access[-_]?key'
+    foreach ($k in @($Values.Keys)) {
+        $key = [string]$k
+        if ($secretNames.Contains($key)) { continue }
+        if ($key -match $nameHeuristic)  { continue }
+        $out[$key] = $Values[$k]
+    }
+    return $out
+}
+
+function Resolve-ItemContext {
+    # Resolve an item by id, RE-VALIDATE it is under a scan root, and load its live param
+    # schema. Shared by /api/run, /api/argv-preview, and preset save so resolution + the
+    # security boundary can never drift between them.
+    # Returns @{ ok=$true; item; resolved; schema } or @{ ok=$false; status; error }.
+    [OutputType([hashtable])]
+    param([string]$ItemId)
+    if (-not $ItemId) { return @{ ok = $false; status = 400; error = 'itemId-required' } }
+    $catalog = Get-HubItems
+    $item = $catalog.items | Where-Object { $_.id -eq $ItemId } | Select-Object -First 1
+    if (-not $item) { return @{ ok = $false; status = 404; error = 'unknown-item' } }
+    $resolved = [System.IO.Path]::GetFullPath($item.path)
+    $underRoot = $false
+    foreach ($r in (Get-EffectiveScanRoots)) {
+        $rNorm = [System.IO.Path]::GetFullPath($r)
+        if ($resolved.StartsWith($rNorm, [System.StringComparison]::OrdinalIgnoreCase)) { $underRoot = $true; break }
+    }
+    if (-not $underRoot) { return @{ ok = $false; status = 404; error = 'unknown-item' } }
+    $schema = Get-ParamSchema -ScriptPath $resolved
+    return @{ ok = $true; item = $item; resolved = $resolved; schema = $schema }
+}
+
+function Resolve-RunPlan {
+    # Item context + built argv. Used by /api/run (then spawns) — argv-preview reuses
+    # Resolve-ItemContext + Build-Argv directly (with masked values). Both paths go
+    # through the SAME Build-Argv, so the preview can't drift from the real run.
+    # Returns @{ ok=$true; item; resolved; schema; argv }
+    #      or @{ ok=$false; status; error [; missing; incomplete] }.
+    [OutputType([hashtable])]
+    param([string]$ItemId, [hashtable]$Values = @{}, [string]$RawArgs = $null)
+    $ctx = Resolve-ItemContext -ItemId $ItemId
+    if (-not $ctx.ok) { return $ctx }
+    try {
+        $argv = Build-Argv -Schema $ctx.schema -Values $Values -RawArgs $RawArgs
+    } catch [System.ArgumentException] {
+        $msg = $_.Exception.Message
+        $missing = @()
+        if ($msg -match 'Required field missing:\s*(.+)$') { $missing = @($Matches[1].Trim()) }
+        return @{ ok = $false; status = 400; error = $msg; missing = $missing; incomplete = $true }
+    } catch {
+        Write-HubError $_
+        return @{ ok = $false; status = 400; error = 'argv-failed' }
+    }
+    return @{ ok = $true; item = $ctx.item; resolved = $ctx.resolved; schema = $ctx.schema; argv = $argv }
+}
+
 function New-JobRecord {
     [OutputType([hashtable])]
     param(
@@ -1353,6 +1428,12 @@ function New-JobRecord {
         stdoutEof     = $false
         stderrEof     = $false
         workflowRunId = $null
+        # Phase 2: redacted run context for history / re-run. `values` is ALREADY
+        # secret-stripped by the caller (Remove-SecretValues); the raw string is NEVER
+        # stored — only the boolean that raw mode was used.
+        values        = @{}
+        rawArgsUsed   = $false
+        itemName      = $null
     }
 }
 
@@ -1404,7 +1485,10 @@ function Start-HubJob {
         [string]$Kind,
         [string[]]$Argv = @(),
         [string]$ItemId,
-        [string]$WorkflowRunId = $null
+        [string]$WorkflowRunId = $null,
+        [hashtable]$Values = @{},      # Phase 2: ALREADY redacted by caller
+        [bool]$RawArgsUsed = $false,
+        [string]$ItemName = $null
     )
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -1446,6 +1530,9 @@ function Start-HubJob {
         try { $proc.StandardInput.Close() } catch { Write-HubError $_ }
         $job = New-JobRecord -JobId $jobId -ItemId $ItemId -Process $proc
         if ($WorkflowRunId) { $job.workflowRunId = $WorkflowRunId }
+        $job.values      = $Values
+        $job.rawArgsUsed = $RawArgsUsed
+        $job.itemName    = $ItemName
         $Script:Jobs[$jobId] = $job
         return $jobId
     } catch {
@@ -1680,26 +1767,7 @@ function Invoke-RunRoute {
     }
     $itemIdValue = "$($itemIdProp.Value)"
 
-    # Resolve item + re-validate scan root
-    $catalog = Get-HubItems
-    $item = $catalog.items | Where-Object { $_.id -eq $itemIdValue } | Select-Object -First 1
-    if (-not $item) {
-        Write-JsonResponse -Context $Context -Status 404 -Body @{ error = 'unknown-item' }
-        return
-    }
-    $resolved = [System.IO.Path]::GetFullPath($item.path)
-    $underRoot = $false
-    foreach ($r in (Get-EffectiveScanRoots)) {
-        $rNorm = [System.IO.Path]::GetFullPath($r)
-        if ($resolved.StartsWith($rNorm, [System.StringComparison]::OrdinalIgnoreCase)) { $underRoot = $true; break }
-    }
-    if (-not $underRoot) {
-        Write-JsonResponse -Context $Context -Status 404 -Body @{ error = 'unknown-item' }
-        return
-    }
-
-    # Build argv from typed values OR raw args
-    $schema = Get-ParamSchema -ScriptPath $resolved
+    # Extract submitted values + raw args from the (PSCustomObject) body.
     $values = @{}
     $valuesProp = $body.PSObject.Properties['values']
     if ($valuesProp -and $valuesProp.Value) {
@@ -1709,19 +1777,23 @@ function Invoke-RunRoute {
     $rawProp = $body.PSObject.Properties['rawArgs']
     if ($rawProp -and $rawProp.Value) { $rawArgs = [string]$rawProp.Value }
 
-    try {
-        $argv = Build-Argv -Schema $schema -Values $values -RawArgs $rawArgs
-    } catch [System.ArgumentException] {
-        Write-JsonResponse -Context $Context -Status 400 -Body @{ error = $_.Exception.Message }
-        return
-    } catch {
-        Write-HubError $_
-        Write-JsonResponse -Context $Context -Status 400 -Body @{ error = 'argv-failed' }
+    # Resolve + re-validate scan root + schema + build argv via the shared helper, so
+    # /api/run and /api/argv-preview can never diverge (both go through Build-Argv).
+    $plan = Resolve-RunPlan -ItemId $itemIdValue -Values $values -RawArgs $rawArgs
+    if (-not $plan.ok) {
+        Write-JsonResponse -Context $Context -Status $plan.status -Body @{ error = $plan.error }
         return
     }
+    $item     = $plan.item
+    $resolved = $plan.resolved
+    $argv     = $plan.argv
+
+    # Redact secrets BEFORE they can reach the job record / history / re-run (ADV-201).
+    $safeValues  = Remove-SecretValues -Schema $plan.schema -Values $values
+    $rawArgsUsed = [bool]$rawArgs
 
     try {
-        $jobId = Start-HubJob -ItemPath $resolved -Kind $item.kind -Argv $argv -ItemId $item.id
+        $jobId = Start-HubJob -ItemPath $resolved -Kind $item.kind -Argv $argv -ItemId $item.id -Values $safeValues -RawArgsUsed $rawArgsUsed -ItemName $item.name
     } catch [System.ComponentModel.Win32Exception] {
         Write-HubError $_
         Write-JsonResponse -Context $Context -Status 500 -Body @{ error = 'spawn-failed'; detail = $_.Exception.Message }
@@ -1733,6 +1805,109 @@ function Invoke-RunRoute {
     }
 
     Write-JsonResponse -Context $Context -Status 202 -Body @{ jobId = $jobId }
+}
+
+function Invoke-ArgvPreviewRoute {
+    # POST /api/argv-preview — compute (DO NOT spawn) the exact argv array Hub would
+    # run, for the "what will run / no shell" trust panel. Read-only; not a state route
+    # (no CSRF), but middleware still enforces Origin + Host + Content-Type for POST.
+    # ADV-202: secret values are MASKED in the response (structure preserved, secret
+    # hidden) — the value is never rendered in the UI command line.
+    param([System.Net.HttpListenerContext]$Context)
+    if ($Context.Request.HttpMethod -ne 'POST') {
+        Write-JsonResponse -Context $Context -Status 405 -Body @{ error = 'method-not-allowed' }
+        return
+    }
+    $body = $null
+    try {
+        $reader = New-Object System.IO.StreamReader($Context.Request.InputStream, [System.Text.Encoding]::UTF8)
+        $text = $reader.ReadToEnd()
+        $reader.Dispose()
+        $body = $text | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Write-JsonResponse -Context $Context -Status 400 -Body @{ error = 'bad-json' }
+        return
+    }
+    $itemIdProp = if ($null -ne $body) { $body.PSObject.Properties['itemId'] } else { $null }
+    if (-not $itemIdProp -or -not $itemIdProp.Value) {
+        Write-JsonResponse -Context $Context -Status 400 -Body @{ error = 'itemId-required' }
+        return
+    }
+    $itemIdValue = "$($itemIdProp.Value)"
+
+    $values = @{}
+    $valuesProp = $body.PSObject.Properties['values']
+    if ($valuesProp -and $valuesProp.Value) {
+        foreach ($p in $valuesProp.Value.PSObject.Properties) { $values[$p.Name] = $p.Value }
+    }
+    $rawArgs = $null
+    $rawProp = $body.PSObject.Properties['rawArgs']
+    if ($rawProp -and $rawProp.Value) { $rawArgs = [string]$rawProp.Value }
+
+    $ctx = Resolve-ItemContext -ItemId $itemIdValue
+    if (-not $ctx.ok) {
+        Write-JsonResponse -Context $Context -Status $ctx.status -Body @{ error = $ctx.error }
+        return
+    }
+    $schema = $ctx.schema
+
+    # ADV-202: mask secret field values before building the displayed argv.
+    $secretNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    if ($schema -and $schema.fields) {
+        foreach ($f in @($schema.fields)) { if ($f.widget -eq 'password') { [void]$secretNames.Add([string]$f.name) } }
+    }
+    $nameHeuristic = '(?i)pass(word)?|secret|token|api[-_]?key|cred(ential)?|client[-_]?secret|access[-_]?key'
+    $maskedValues = @{}
+    foreach ($k in @($values.Keys)) {
+        $key = [string]$k
+        if ($secretNames.Contains($key) -or ($key -match $nameHeuristic)) { $maskedValues[$key] = '********' }
+        else { $maskedValues[$key] = $values[$k] }
+    }
+
+    $complete = $true
+    $missing  = @()
+    try {
+        $argv = Build-Argv -Schema $schema -Values $maskedValues -RawArgs $rawArgs
+    } catch [System.ArgumentException] {
+        $complete = $false
+        $msg = $_.Exception.Message
+        if ($msg -match 'Required field missing:\s*(.+)$') { $missing = @($Matches[1].Trim()) }
+        $argv = @()
+    } catch {
+        Write-HubError $_
+        Write-JsonResponse -Context $Context -Status 400 -Body @{ error = 'argv-failed' }
+        return
+    }
+
+    # Build the displayed exe + the full command line (fixed prefix for .ps1).
+    if ($ctx.item.kind -eq 'ps1') {
+        $exe    = 'pwsh'
+        $prefix = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ctx.resolved)
+    } else {
+        $exe    = $ctx.resolved
+        $prefix = @()
+    }
+    $fullArgs = @($prefix) + @($argv)
+    $cmdLine  = $exe + ' ' + (Join-CmdLineArgs -ArgArray $fullArgs)
+
+    # argv is a small flat string array — Write-JsonResponse (pipeline ConvertTo-Json)
+    # would null an EMPTY argv, so serialize the body with -InputObject + manual write.
+    $payload = @{
+        exe               = $exe
+        argv              = @($argv)
+        prefix            = @($prefix)
+        commandLineString = $cmdLine
+        schemaMode        = if ($schema) { [string]$schema.mode } else { 'raw' }
+        complete          = $complete
+        missing           = @($missing)
+    }
+    $json = ConvertTo-Json -InputObject $payload -Depth 10 -Compress
+    if ($null -eq $json) { $json = '{}' }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $Context.Response.StatusCode      = 200
+    $Context.Response.ContentType     = 'application/json; charset=utf-8'
+    $Context.Response.ContentLength64 = $bytes.LongLength
+    $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
 }
 
 function Invoke-StreamRoute {
@@ -1995,6 +2170,15 @@ function Invoke-Route {
         if ($path -eq '/api/history') {
             Invoke-HistoryRoute -Context $Context; return $true
         }
+        if ($path -eq '/api/presets') {
+            Invoke-PresetsRoute -Context $Context; return $true
+        }
+        if ($path -match '^/api/presets/([^/]+)$') {
+            Invoke-PresetByIdRoute -Context $Context -PresetId $matches[1]; return $true
+        }
+        if ($path -eq '/api/argv-preview') {
+            Invoke-ArgvPreviewRoute -Context $Context; return $true
+        }
         if ($path -like '/api/*') {
             Write-JsonResponse -Context $Context -Status 503 -Body @{ error = 'not-yet-implemented'; path = $path }
             return $true
@@ -2209,6 +2393,7 @@ Initialize-WorkflowRuns
 Initialize-TriggerStates
 Initialize-GitRoots
 Initialize-History
+Initialize-Presets
 
 try {
     $hubPort = Initialize-HubPort -Preferred $Script:Port

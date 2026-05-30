@@ -23,6 +23,71 @@ compatibility with existing saved workflows (which use only `success` edges, `on
 Backend changes require an exe rebuild → ships as **v1.9.0.0**. This is the highest-complexity phase;
 the run state-machine changes in `Advance-WorkflowRuns` are the riskiest part.
 
+> **Anchor-verified against HEAD (commit `047de58`).** Every `Hub-WorkflowEngine.ps1`/`Hub-Workflows.ps1`
+> line citation below was checked against the current source. Two facts changed since the plan was first
+> drafted and are now corrected inline: (a) **`-SkipMutex` already shipped** (Hub.ps1 L18 + L2186) — Item 0
+> step 1 is verify-only; (b) the **resume route insertion point is L1986–1989**, not "~1977". If you edit
+> these modules, re-confirm anchors before trusting them — they drift with every commit.
+
+---
+
+## PS5.1 Safety Contract (READ FIRST — non-negotiable)
+
+Hub.exe is compiled by PS2EXE against the **Windows PowerShell 5.1** runtime. A single PS7-only token
+anywhere in a dot-sourced module silently breaks that module's load — the exe starts but the feature (or
+the whole route table) is dead, and **pwsh-7 tests will NOT catch it**. Every edit to
+`Hub-WorkflowEngine.ps1`, `Hub-Workflows.ps1`, `Hub.ps1`, and the new `Hub-WorkflowControl.ps1` MUST obey:
+
+| BANNED (PS7-only) | USE INSTEAD (PS5.1-safe, already used in this codebase) |
+|---|---|
+| `$x ?? $y` (null-coalescing) | `if ($null -eq $x) { $y } else { $x }` |
+| `$cond ? $a : $b` (ternary) | `if ($cond) { $a } else { $b }` — **and** `$x = if (…) {…} else {…}` IS valid PS5.1 (see engine L172/L174, validator L111/L173) |
+| `$obj?.Prop` (null-conditional) | `if ($obj) { $obj.Prop }` |
+| `ConvertFrom-Json -AsHashtable` | `ConvertFrom-JsonHashtable ($raw | ConvertFrom-Json)` (helper in `Hub-Workflows.ps1` L33) |
+| `ConvertFrom-Json -Depth` (PS7 default differs) | rely on default; for arrays use the `,@(...)` unroll guard (helper L47) |
+| pipeline chain `&&` / `||` | separate statements / `if ($?)` |
+| `clean { }` block | n/a — do not use |
+
+Additional codebase invariants to preserve verbatim:
+- **Any new list/array JSON response** uses `ConvertTo-Json -InputObject $list` with a `if ($null -eq $json) { $json = '[]' }` fallback (see validator `Invoke-WorkflowsRoute` L250–253) — bare-pipeline `$list | ConvertTo-Json` yields `null` for empty arrays in PS5.1.
+- **Hashtable key access** uses `$h['key']` and `$h.ContainsKey('key')` (NOT `$h?.key`).
+- **Field names are camelCase and exact**: run step outputs are `stdout`, `stdoutAll`, `exitCode` (engine L153–157; `Resolve-StepParams` reads `$o.stdoutAll`). The foreach synthetic entry and JSON-ref code MUST use these exact spellings — a typo (`stdOutAll`) resolves to `$null` → empty string, silently breaking refs.
+- `ConvertTo-Json -Depth 10` is the persistence depth (engine L20, validator L59); new keys (`foreachFrames`, `pause`) serialize fine at depth 10.
+
+**MANDATORY GATE — parse-check under PS5.1 before ANY exe build:**
+```powershell
+foreach ($f in 'Hub-WorkflowEngine.ps1','Hub-Workflows.ps1','Hub-WorkflowControl.ps1','Hub.ps1') {
+  if (Test-Path $f) {
+    powershell.exe -NoProfile -Command "
+      `$errs = `$null
+      `$null = [System.Management.Automation.PSParser]::Tokenize((Get-Content -Raw '$f'), [ref]`$errs)
+      if (`$errs -and `$errs.Count -gt 0) { Write-Host ('FAIL $f -> ' + `$errs[0].Message); exit 1 }
+      else { Write-Host 'OK   $f' }
+    "
+    if ($LASTEXITCODE -ne 0) { throw 'PS5.1 parse gate FAILED — fix before building' }
+  }
+}
+```
+Run with `powershell.exe` (the 5.1 binary), NOT `pwsh`. **Check the `[ref]$errs` collection** — `PSParser::Tokenize`
+reports syntax errors via that out-param, NOT by throwing or by setting `$?`. A non-empty `$errs` (or
+non-zero `$LASTEXITCODE`) blocks the build. This gate is step 0 of the build sequence and a
+Definition-of-Done checkbox. (`Hub-WorkflowControl.ps1` is skipped by `Test-Path` if the split wasn't needed.)
+
+> **What the gate CATCHES vs MISSES — empirically tested on PS 5.1.26100.8457:**
+>
+> | Banned token | `PSParser::Tokenize` catches? |
+> |---|---|
+> | `$a ?? $b` (null-coalescing) | **YES** (errs ≥ 1) |
+> | `$c ? 1 : 2` (ternary) | **YES** (errs ≥ 1) |
+> | `$o?.p` (null-conditional) | **NO** — `?` is a legal variable-name char in 5.1, so `$o?.p` lexes as `${o?}.p` (valid syntax, wrong semantics) |
+> | `-AsHashtable` / `-Depth` (param-level) | **NO** — valid syntax, fails only at runtime |
+>
+> The gate is a strong net for `??` and ternary, but it CANNOT see `?.` or wrong parameters — those are
+> caught ONLY by the banned-token table above + human/`rune:adversary` review + the live `-SkipMutex` smoke
+> run (which dot-sources the modules under 5.1 and will surface a broken `?.` at runtime). Do NOT treat a
+> green gate as proof of 5.1-safety; it is necessary, not sufficient. (`Language.Parser::ParseInput` gives
+> the identical verdict — same two hits, same `?.` miss — so there is no benefit to switching parsers.)
+
 ---
 
 ## Dependencies / prerequisites
@@ -30,8 +95,9 @@ the run state-machine changes in `Advance-WorkflowRuns` are the riskiest part.
 - Phases 0–4 shipped and stable (workflow CRUD, engine, triggers, git catalogs, history, canvas).
 - Hub.exe must be rebuilt and re-released as part of this phase (the running binary's `Invoke-Route`
   table is compiled in; new routes will not work until rebuild). See HANDOFF.md known-issue #2.
-- Smoke tests need Hub.exe **not** running OR the `-SkipMutex` flag (HANDOFF.md known-issue #1). This
-  phase should add `-SkipMutex` to `Hub.ps1` first so the new smoke tests can run alongside the binary.
+- Smoke tests need Hub.exe **not** running OR the `-SkipMutex` flag (HANDOFF.md known-issue #1).
+  **`-SkipMutex` already shipped in v1.5.0.0** (`Hub.ps1` L18 + L2186) — the new smoke tests can run
+  alongside the binary today; no plumbing prerequisite remains here. Item 0 step 1 is verify-only.
 - No new runtime dependencies. PowerShell 5.1 and 7 must both work. All files stay under 500 lines —
   `Hub-WorkflowEngine.ps1` (currently ~306 lines) will grow; split out the resolution/foreach helpers
   into a new `Hub-WorkflowControl.ps1` if the engine would exceed ~480 lines after edits.
@@ -102,34 +168,58 @@ Canvas edge gains `fromPort: "always"` (already free-form string; existing edges
 
 ## Implementation steps (numbered; each: what / where / how-to-verify)
 
-### Item 0 — Plumbing: `-SkipMutex` + resume route registration
+### Item 0 — Plumbing: resume route registration
 
-1. **Add `-SkipMutex` switch.** *Where:* `Hub.ps1` param block + the mutex acquisition block.
-   *How:* guard the `Global\HubInstance.<username>` mutex acquisition with `if (-not $SkipMutex)`.
-   *Verify:* `pwsh -File Hub.ps1 -Port 8799 -SkipMutex` starts a second instance while Hub.exe runs.
+1. **`-SkipMutex` is ALREADY SHIPPED — verify only, do NOT re-add.** It was added in v1.5.0.0:
+   param declaration at `Hub.ps1` **L18** (`[switch]$SkipMutex`), guard at **L2186–2191**
+   (`if (-not $SkipMutex) { if (-not (Test-SingleInstance)) { exit 0 } }`). The mutex itself is
+   `Global\HubInstance.<userTag>` (L131–135). *Verify (no edit):* `pwsh -File Hub.ps1 -Port 8799 -SkipMutex`
+   starts a second instance while Hub.exe runs. If this already works, skip straight to step 2.
 
-2. **Register resume route + state-route entry.** *Where:* `Hub.ps1` `$Script:StateRoutes` (line ~45)
-   and the route dispatch block (line ~1977, before the bare `/api/workflow-runs/([^/]+)$` catch so the
-   more specific pattern matches first). Add `'/api/workflow-runs/.+?/resume'` to `$Script:StateRoutes`
-   and `if ($path -match '^/api/workflow-runs/([^/]+)/resume$') { Invoke-WorkflowRunResumeRoute ...; return $true }`.
-   *Verify:* `POST` without CSRF header → 403; with header to unknown run → 404.
+2. **Register resume route + state-route entry.** *Where:* `Hub.ps1` `$Script:StateRoutes` array
+   (**L48–58**; add the new entry next to `'/api/workflow-runs/.+?/kill'` at **L56**) and the route
+   dispatch block. **Exact insertion point:** add the `/resume` regex branch immediately AFTER the
+   `/kill` branch (**L1986–1988**) and BEFORE the bare `/api/workflow-runs/([^/]+)$` catch (**L1989**),
+   so the more specific pattern matches first. Add `'/api/workflow-runs/.+?/resume'` to
+   `$Script:StateRoutes` and:
+   ```powershell
+   if ($path -match '^/api/workflow-runs/([^/]+)/resume$') {
+       Invoke-WorkflowRunResumeRoute -Context $Context -RunId $matches[1]; return $true
+   }
+   ```
+   *Verify:* `POST /resume` without CSRF header → 403 (StateRoutes gate); with header to unknown run → 404.
 
 ### Item 1 — Conditional edge ports (`failure` / `always`)
 
-3. **Engine routing: add `onAlways`.** *Where:* `Hub-WorkflowEngine.ps1` `Advance-WorkflowRuns`, the
-   block at lines ~162–178 that picks `$rf = onSuccess|onFailure`. *How:* before choosing by status,
-   check `if ($step.ContainsKey('onAlways')) { $target = [string]$step['onAlways'] } else { <existing
-   onSuccess/onFailure logic> }`. Keep `'next'`/`'stop'`/`$null` resolution identical. This is the ONLY
-   change needed for `always` routing — `always` is just "route regardless of exit code."
+3. **Engine routing: add `onAlways`.** *Where:* `Hub-WorkflowEngine.ps1` `Advance-WorkflowRuns`. The
+   exact lines are `$rf` at **L172**, `$step = $steps[$curIdx]` at **L173**, and `$target = if
+   ($step.ContainsKey($rf)) {...} else { 'next' }` at **L174**. *How:* replace the L172/L174 pair with
+   an `onAlways`-first selection that keeps the existing `$rf` fallback verbatim:
+   ```powershell
+   $step = $steps[$curIdx]                                    # was L173, keep
+   if ($step.ContainsKey('onAlways')) {
+       $target = [string]$step['onAlways']
+   } else {
+       $rf     = if ($job.status -eq 'done') { 'onSuccess' } else { 'onFailure' }   # was L172
+       $target = if ($step.ContainsKey($rf)) { [string]$step[$rf] } else { 'next' } # was L174
+   }
+   ```
+   The `'stop'`→`$null` (L175) and `'next'`→next-step-by-index (L176–178) resolution below stays
+   UNCHANGED. The step-output capture at **L153–157** runs BEFORE this block (it always does), so the
+   downstream step still sees the upstream `stdout`/`stdoutAll`/`exitCode`. This is the ONLY change for
+   `always` routing — `always` = "route regardless of exit code."
    *Verify:* a step whose script exits non-zero with an `onAlways` target still advances to that target.
 
 4. **Validator: accept `onAlways` targets.** *Where:* `Hub-Workflows.ps1` `Test-WorkflowSchema`,
-   the `foreach ($field in @('onSuccess','onFailure'))` loop (~line 217). Add `'onAlways'` to the field
-   list so its target is validated against `$validTargets`.
+   the target-validation loop `foreach ($field in @('onSuccess','onFailure'))` at **L217**. Change to
+   `@('onSuccess','onFailure','onAlways')` so the target is checked against `$validTargets` (built at L212).
    *Verify:* save a workflow with `onAlways: "s2"` → 200; with `onAlways: "s99"` → 422.
 
 5. **DFS cycle detection: include `onAlways` edges.** *Where:* `Hub-Workflows.ps1` `Test-WorkflowGraph`,
-   the `foreach ($field in @('onSuccess','onFailure'))` adjacency loop (~line 110). Add `'onAlways'`.
+   the adjacency loop `foreach ($field in @('onSuccess','onFailure'))` at **L110**. Change to
+   `@('onSuccess','onFailure','onAlways')`. Note: `Visit-Step` is a NESTED function (L125–135) — do not
+   touch it; only the field list changes. The `if ($s.ContainsKey($field)) {...} else {'next'}` form at
+   L111 is PS5.1-safe `if`-expression — keep that exact shape for the new field.
    *How-to-verify:* a workflow where `s1.onAlways = s2` and `s2.onSuccess = s1` → 422 cycle error.
 
 6. **Canvas: render `failure` + `always` ports.** *Where:* `canvas-editor.js` `PORT` map (~line 57).
@@ -267,17 +357,50 @@ Canvas edge gains `fromPort: "always"` (already free-form string; existing edges
 
 ### Item 4 — Structured output refs `{{step-sN.json.foo.bar}}`
 
-18. **Extend `Resolve-StepParams`.** *Where:* `Hub-WorkflowEngine.ps1` lines ~78–96. *How:* BEFORE the
-    existing `.stdout.all`/`.stdout`/`.exitCode` replacements, add a regex pass for
-    `\{\{step-(?<sid>[^.}]+)\.json\.(?<path>[^}]+)\}\}`. For each match: look up `$StepOutputs[$sid]`,
-    parse its `stdoutAll` as JSON **once per step, cached** in a local hashtable to avoid re-parsing;
-    walk the dotted path with support for array indices (`foo.0.bar` or `foo[0].bar` — pick `.0.`).
-    Resolve to the value as a string (objects/arrays → compact JSON; scalars → `[string]`). On parse
-    failure, missing key, or out-of-range index → replace with empty string (graceful degradation,
-    matching the existing "empty values are dropped" contract at line ~93). Order matters: do `.json.`
-    BEFORE `.stdout` so the longer token wins (same reasoning as the existing `.stdout.all`-before-`.stdout`).
-    *Verify:* step emitting `{"foo":{"bar":42}}` → `{{step-s1.json.foo.bar}}` resolves to `42`;
-    invalid JSON → empty; missing path → empty.
+18. **Extend `Resolve-StepParams`.** *Where:* `Hub-WorkflowEngine.ps1` `Resolve-StepParams` (L78–96).
+    *Exact code shape (match the existing function — do NOT introduce ternary/`??`/`-AsHashtable`):*
+    The existing function loops `foreach ($key in @($Params.Keys))` then `foreach ($sid in @($StepOutputs.Keys))`
+    doing three `-replace [regex]::Escape(...)` calls (L89–91). Add the `.json.` handling as a SEPARATE
+    `[regex]::Matches` pass INSIDE the per-key loop but BEFORE the per-sid `-replace` block, so the longer
+    `.json.` token is consumed first (same rationale as `.stdout.all`-before-`.stdout`):
+    ```powershell
+    # NEW: structured JSON-path refs. Runs before the .stdout/.exitCode replacements.
+    $jsonCache = @{}   # sid -> parsed hashtable/array (or $null if unparseable) — parse once per step
+    $jm = [regex]::Matches($val, '\{\{step-(?<sid>[^.}]+)\.json\.(?<path>[^}]+)\}\}')
+    foreach ($m in $jm) {
+        $jsid = $m.Groups['sid'].Value
+        $jpath = $m.Groups['path'].Value
+        $resolved = ''
+        $o = $StepOutputs[$jsid]
+        if ($o) {
+            if (-not $jsonCache.ContainsKey($jsid)) {
+                $parsed = $null
+                $raw = [string]$o.stdoutAll          # EXACT field name — camelCase
+                if ($raw.Length -le 1048576) {        # 1MB cap — DoS guard (ADV/security)
+                    try { $parsed = ConvertFrom-JsonHashtable ($raw | ConvertFrom-Json) } catch { $parsed = $null }
+                }
+                $jsonCache[$jsid] = $parsed
+            }
+            $node = $jsonCache[$jsid]
+            foreach ($seg in ($jpath -split '\.')) {
+                if ($null -eq $node) { break }
+                if ($node -is [hashtable] -and $node.ContainsKey($seg)) { $node = $node[$seg] }
+                elseif (($node -is [System.Array]) -and ($seg -match '^\d+$') -and ([int]$seg -lt $node.Count)) { $node = $node[[int]$seg] }
+                else { $node = $null; break }
+            }
+            if ($null -ne $node) {
+                $resolved = if ($node -is [hashtable] -or $node -is [System.Array]) { ($node | ConvertTo-Json -Depth 10 -Compress) } else { [string]$node }
+            }
+        }
+        $val = $val.Replace($m.Value, $resolved)      # literal replace of the matched token
+    }
+    ```
+    Array index path is `.0.` form (`foo.0.bar`), since segments split on `.`. On parse failure / missing
+    key / out-of-range / oversized stdout → empty string (graceful; matches the "empty values dropped"
+    contract at L93). NEVER `Invoke-Expression`. `ConvertFrom-JsonHashtable` is already PS5.1-safe and
+    yields `[hashtable]`/`[System.Array]`, which the walker above expects.
+    *Verify:* step emitting `{"foo":{"bar":42},"list":[10,20]}` → `{{step-s1.json.foo.bar}}` → `42`,
+    `{{step-s1.json.list.1}}` → `20`; invalid JSON → empty; missing path → empty; 2MB stdout → empty (capped).
 
 19. **Validator: forward-reference check covers `.json` refs.** *Where:* `Hub-Workflows.ps1`
     `Test-WorkflowSchema` param-ref scan (~line 199). The existing regex `\{\{step-([^.}]+)` already
@@ -297,7 +420,7 @@ Canvas edge gains `fromPort: "always"` (already free-form string; existing edges
 
 | Step(s) | Layer | Needs exe rebuild? |
 |--------|-------|--------------------|
-| 1, 2 (`-SkipMutex`, resume route) | Backend (Hub.ps1) | YES |
+| 2 (resume route) — step 1 `-SkipMutex` already shipped (verify-only) | Backend (Hub.ps1) | YES |
 | 3, 4, 5 (onAlways routing/validation/cycle) | Backend | YES |
 | 8, 9, 10, 11, 12 (pause schema/engine/resume/recovery/kill-paused) | Backend | YES |
 | 14, 15, 16 (foreach schema/engine/cycle) | Backend | YES |
@@ -339,8 +462,10 @@ Fixtures (`tests/fixtures/`): `exit-with.ps1` (`param($Code) exit $Code`), `emit
    process or re-reading the run file) → status still `paused`, not `interrupted`.
 7. **Resume guards:** `/resume` on a `running` or `done` run → 409; missing CSRF → 403; unknown run → 404.
 8. **Foreach lines:** `s1(emit-lines)`, `s2 foreach(source=s1, as=lines, bodyStart=s3)`, `s3(echo-arg
-   {{foreach.item}})`; run; assert s3 ran 3 times (inspect child job count for the run) and foreach
-   step's `stepOutputs.stdoutAll` contains all 3 items.
+   {{step-s2.stdout}})` — note the current-item token is `{{step-<foreachStepId>.stdout}}` (here `s2`),
+   NOT a `{{foreach.item}}` token (that token was rejected — see Item 3 step 15). Run; assert s3 ran 3
+   times (inspect child job count for the run) and the foreach step's `stepOutputs.stdoutAll` contains
+   all 3 items joined by `\n`.
 9. **Foreach json:** `s1(emit-json)`, foreach over `as=json` of `.list` → 2 iterations. (If `as=json`
    expects a top-level array, use a fixture that emits `[1,2,3]`.)
 10. **Foreach maxItems:** source emits 10 lines, `maxItems=3` → exactly 3 iterations.
@@ -433,6 +558,8 @@ boundary logic (Item 3, step 14) and the paused-run garbage-collection paths (It
 | Goal | Command |
 |------|---------|
 | Plan exists | `Test-Path "docs/plans/phase-5-deep-capability.md"` |
+| `-SkipMutex` present (Item 0 step 1 done) | `Select-String -Path Hub.ps1 -Pattern '\$SkipMutex'` |
+| PS5.1 parse gate green | run the gate block in the "PS5.1 Safety Contract" section under `powershell.exe` |
 | Smoke suite green | `pwsh -File tests/smoke-phase5-controlflow.ps1` |
 | Back-compat intact | `pwsh -File tests/smoke-phase2-engine.ps1` |
 | Binary rebuilt | `./build-hub.ps1 -Version 1.9.0.0; (Get-Item dist/Hub.exe).VersionInfo.FileVersion` |

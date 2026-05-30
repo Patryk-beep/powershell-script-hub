@@ -21,15 +21,21 @@ the compiled binary:
 ## Dependencies / prerequisites
 
 - None on the backend. All endpoints consumed already exist and are served by the **running
-  v1.4.13.0 binary**: `/api/items`, `/api/items/:id/schema`, `/api/stream/:jobId` (SSE),
-  `/api/run`. No new routes.
-- **Hard constraint that shapes the design:** the running `Hub.exe` is **v1.4.13.0** and its
-  embedded `Invoke-Route` returns **503** for any route not baked into the binary
-  (HANDOFF "Known issues" #2). Therefore **a new backend route for pins/recents would not work
-  without rebuilding the exe** — which would violate "frontend-only / no rebuild." localStorage
-  is consequently not merely the *lighter* option, it is the *only* frontend-only option.
+  v1.5.0.0 binary** (Phase 0 shipped 2026-05-30): `/api/items`, `/api/items/:id/schema`,
+  `/api/stream/:jobId` (SSE), `/api/run`. No new routes.
+- **Hard constraint that shapes the design (keystone logic — read carefully):** `Hub.exe`'s
+  embedded `Invoke-Route` bakes its **route table into the binary**; any route not in that table
+  returns **503**, and adding one requires a *rebuild + release*. This mechanism is unchanged by
+  Phase 0. What Phase 0 changed is only the example: the *workflow* routes (`/api/workflows/**`)
+  now ship in v1.5.0.0, so the old "v1.4.13.0 503s any new route" framing is stale. But **a
+  pins/recents route was never built** — so it would still 503 on today's binary, and wiring one
+  would force a rebuild, violating "frontend-only / no rebuild." Therefore localStorage is not
+  merely the *lighter* option for pins/recents — it is the **only** frontend-only option.
   Trade-off: pins/recents are **per-browser-profile**, not synced across machines, and cleared
   if the user wipes site data. Accepted — matches the existing `hiddenIds` precedent.
+- **If any step below is tempted to add a backend route** (e.g. server-synced pins, a
+  notification-prefs endpoint): STOP. That would require a `build-hub.ps1` + `build-release.ps1`
+  rebuild and a new release tag — out of scope for this frontend-only phase. Prefer localStorage.
 - Existing precedents this phase reuses verbatim:
   - `app.js` `restorePrefs()` — localStorage load + `this.$watch(...)` persistence pattern
     (used today for `hiddenIds`, `kindFilter`, `sortBy`, `autoScroll`, `showHidden`).
@@ -64,6 +70,15 @@ the compiled binary:
   — minimal hooks: snapshot-before-mutate calls in `cnAddNode`/`cnRemoveNode`/`cnAddEdge`/
     `cnRemoveEdge` and at move-start; make the `snap()` calls honor `cnSnapEnabled`; auto-fit
     on the auto-layout path in `cnOpenWorkflow`; Ctrl+Z handling in `cnKeyDown`.
+  - **Line-count decision (explicit):** `canvas-editor.js` is **exactly 497 lines**. The hooks
+    above (~5 `cnSnapshot()` call sites + the Ctrl+Z branch + a `$nextTick` wrap) add roughly
+    8–15 lines, which pushes it **past 500**. The `<500` rule in the CLAUDE.md project guidance
+    is enforced on **new files** (`canvas-polish.js`, `hub-notify.js` must each stay under 500);
+    `app.js` already sits at 845, so the limit is understood as "don't grow large files with new
+    *logic*." These are call-site hooks, not logic. **Resolution:** accept `canvas-editor.js`
+    crossing ~505–510; do NOT relocate canvas internals to satisfy the line count. If a reviewer
+    objects, the cheapest net-zero move is making `cnSnap(v)` a one-liner and inlining the Ctrl+Z
+    guard — but that is optional, not required by this plan.
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\wwwroot\style.css`
   — minimap container/rects, snap-toggle active state, pin button + pinned/recents row,
     toast-disabled fallback styling. All motion gated behind `prefers-reduced-motion`.
@@ -244,9 +259,10 @@ the compiled binary:
 
 **Every step is pure frontend.** `wwwroot/` is served from disk by the running `Hub.exe`, so
 all changes take effect on browser refresh. **No `build-hub.ps1` / `build-release.ps1` run is
-required for this phase.** (The separate, pre-existing need to rebuild the exe to v1.5.0.0 for
-the *workflow routes* is out of scope here.) The localStorage choice for pins is what *keeps*
-this phase frontend-only — a backend pins route would 503 on the current binary (see Dependencies).
+required for this phase.** (The v1.5.0.0 rebuild that baked in the *workflow routes* already
+shipped in Phase 0 — that is done, not pending.) The localStorage choice for pins is what *keeps*
+this phase frontend-only — a backend pins route was never built, so it would 503 on the current
+v1.5.0.0 binary and force another rebuild (see Dependencies).
 
 ## Testing & verification
 
@@ -257,8 +273,13 @@ this phase frontend-only — a backend pins route would 503 on the current binar
     foreground → no toast; title shows ●/✓/✗ then resets to "Hub" on focus.
   - Pins/recents: pin → top + persists across reload; recents populate and hide on search.
 - **Existing static smoke test:** re-run
-  `tests\smoke-canvas-editor.ps1` (PASSes against a running `Hub.exe` per HANDOFF) to confirm the
-  new `<script>` tags and toolbar markup didn't break the canvas static checks.
+  `tests\smoke-canvas-editor.ps1` to confirm the new `<script>` tags and toolbar markup didn't
+  break the canvas static checks. **Phase-0 update:** `Hub.ps1` now accepts `-SkipMutex`
+  (line 18; gate at line 2186) and every smoke test passes it plus `-Port`, so the suite now
+  runs **alongside a live `Hub.exe`** — the old "fails while Hub.exe holds the mutex" limitation
+  (HANDOFF "Known issues" #1) is fixed. No need to close Hub.exe before testing this phase.
+  Note: `smoke-canvas-editor.ps1` serves `wwwroot/` from disk, so it validates the *edited*
+  frontend immediately with no rebuild.
 - **Reduced-motion:** with OS "reduce motion" on, verify minimap/toast/pinned-row introduce no
   animation; existing `@media (prefers-reduced-motion)` blocks in `style.css` already gate the
   blob/drift animations — new selectors must follow the same gating.
@@ -281,6 +302,34 @@ this phase frontend-only — a backend pins route would 503 on the current binar
 | Pins/recents not synced across machines | Documented trade-off of the localStorage-only constraint; acceptable, mirrors `hiddenIds`. |
 | Workflow runs assumed to toast "for free" | They use polling, not SSE — handled explicitly in B5, with an optional-drop note. |
 | `item.id` instability would mis-pin | Same assumption `hiddenIds` already relies on; noted, not re-litigated. |
+
+## Rejection criteria (explicit DO-NOTs — anti-patterns to prevent common mistakes)
+
+These consolidate the "DO NOT" guidance scattered through the steps above into one checklist
+so an executing coder cannot miss them:
+
+- **DO NOT** build an undo *stack* or multi-level history. Undo is **one level only** (single
+  previous snapshot, nulled after restore) — see A3. A growing stack is out of scope and a
+  memory/complexity trap.
+- **DO NOT** auto-fit (`cnFitScreen`) on the saved-viewport branch of `cnOpenWorkflow`. Auto-fit
+  ONLY on the auto-layout-from-`steps[]` branch and in `cnOpenNew()`. Auto-fitting a canvas-native
+  workflow would **discard the user's saved pan/zoom** — see A4.
+- **DO NOT** make the minimap interactive in v1 (no click-to-pan, no drag). It is **display-only**;
+  interactivity is a future phase — see A5.
+- **DO NOT** call `Notification.requestPermission()` on page load or in `init()`. Request **only**
+  on the run-button user gesture inside `submit()`; browsers penalize load-time prompts — see B2.
+- **DO NOT** put run arguments, parameter values, or any stdout/stderr output in a notification
+  toast. Body is limited to **script name + status/exit code** only — see B3 (security).
+- **DO NOT** add a backend route for pins, recents, or notification prefs. All three are
+  **localStorage only**; a new route would 503 and force an exe rebuild — see Dependencies.
+- **DO NOT** add a third new JS file. Keep pins/recents inside `hub-notify.js`; only two new
+  files are created this phase.
+- **DO NOT** introduce un-gated motion. Every new animated selector (minimap, toast, pinned row)
+  must sit behind the existing `@media (prefers-reduced-motion)` blocks in `style.css`.
+- **DO NOT** assume workflow runs toast "for free." They poll (`wfStartPoll`), not SSE — they
+  need an explicit completion hook — see B5.
+- **DO NOT** let `restorePins()` / `restoreNotifyPrefs()` throw on corrupt localStorage. Wrap
+  reads in try/catch exactly like `restorePrefs()` — a bad stored value must never break `init()`.
 
 ## Rollback plan
 
@@ -309,5 +358,27 @@ this phase frontend-only — a backend pins route would 503 on the current binar
       localStorage values handled gracefully.
 - [ ] New code lives in `canvas-polish.js` + `hub-notify.js` (each < 500 lines); edits to
       `canvas-editor.js` / `app.js` are minimal hooks.
-- [ ] `tests\smoke-canvas-editor.ps1` still PASSes; verified entirely **without rebuilding
-      `Hub.exe`** (browser hard-refresh only).
+- [ ] `tests\smoke-canvas-editor.ps1` still PASSes (now runs alongside a live `Hub.exe` via
+      `-SkipMutex`); verified entirely **without rebuilding `Hub.exe`** (browser hard-refresh only).
+
+## Outcome Block
+
+**What was planned:** Three frontend-only feature groups for the v1.5.x point release — (A)
+canvas polish (snap toggle, one-level Ctrl+Z undo, auto-fit-on-open, display-only minimap), (B)
+run-finished OS notifications + `document.title` progress for both catalog (SSE) and workflow
+(poll) runs, and (C) pinned/recents catalog with localStorage persistence. All logic lands in two
+new mixin files (`canvas-polish.js`, `hub-notify.js`); existing files get minimal call-site hooks.
+No `Hub.exe` rebuild — `wwwroot/` is served from disk.
+
+**Immediate next action:** Create `wwwroot/canvas-polish.js` with `canvasPolishMixin()` exposing
+`cnSnapEnabled`, `cnSnap(v)`, `cnUndoSnapshot`/`cnSnapshot()`/`cnUndo()`, and `get cnMinimap()`
+(start of Group A, task A1→A2).
+
+**How to measure:**
+
+| What | Command | Pass condition |
+|------|---------|----------------|
+| New files exist & under 500 lines | `(Get-Content wwwroot\canvas-polish.js).Count; (Get-Content wwwroot\hub-notify.js).Count` | both < 500 |
+| Canvas static smoke still green (alongside live Hub.exe) | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\smoke-canvas-editor.ps1` | exits 0 / "PASS" |
+| No new backend route snuck in | `Select-String -Path wwwroot\*.js -Pattern "/api/pins|/api/recents|/api/notify"` | no matches |
+| Mixins wired (console, manual) | DevTools: `typeof hubApp().cnUndo` and `typeof hubApp().notifyRunDone` | both `"function"`, no "not defined" errors |

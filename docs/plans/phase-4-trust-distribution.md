@@ -64,9 +64,9 @@ Do not weaken or remove `$Script:ExpectedZipHash` verification.
 
 **Existing — edited:**
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\build-release.ps1` — insert sign step between build and stage; surface signing config.
-- `C:\Users\Harrold\Documents\Claude Projects\Hub\Hub.ps1` — bump `$Script:Version` to `1.8.0.0` (line 24); introduce `$Script:DataDir` + portable detection; dot-source new diagnostics module; register two new GET routes in `Invoke-Route`; fix `Get-HubCacheDir` to use `$Script:DataDir`.
+- `C:\Users\Harrold\Documents\Claude Projects\Hub\Hub.ps1` — bump `$Script:Version` to `1.8.0.0` (line 27); introduce `$Script:DataDir` + portable detection (config init currently lines 64–69); dot-source new diagnostics module (dot-source block lines 112–116); register two new GET routes in `Invoke-Route`; fix `Get-HubCacheDir` (lines 336–348) to use `$Script:DataDir`.
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\README.md` — rewrite SmartScreen section; add winget install option; add Portable mode + Diagnostics sections.
-- `C:\Users\Harrold\Documents\Claude Projects\Hub\install-hub.ps1` — soften SmartScreen messaging on first launch (signed build); add `-Portable` passthrough doc (installer itself stays %LOCALAPPDATA% based).
+- `C:\Users\Harrold\Documents\Claude Projects\Hub\install-hub.ps1` — **bump the `$Version` default `'v1.5.0.0'` → `'v1.8.0.0'` (line 47)** — this gates the download URL and MUST track the release tag (see item 1.6); soften SmartScreen messaging on first launch (signed build); add `-Portable` passthrough doc (installer itself stays %LOCALAPPDATA% based).
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\wwwroot\app.js` — fetch `/api/version-check`, render banner; add Diagnostics view fetching `/api/doctor`.
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\wwwroot\index.html` — banner element + Diagnostics tab/panel.
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\wwwroot\style.css` — banner + diagnostics styling.
@@ -96,26 +96,50 @@ contributors without credentials still build. Pseudocode shape (no code in this 
 Use the Microsoft timestamp service `http://timestamp.acs.microsoft.com` for the Artifact Signing path.
 / verify: `signtool verify /pa /v "<repo>\Hub.exe"` reports a valid chain after this step runs.
 
-1.3 **Confirm the hash-flow ordering is correct.** / build-release.ps1 lines 84–113. / Because signing
-mutates `Hub.exe` → mutates the staged copy → mutates `Hub.zip` bytes, the SHA256 computed at
-line 112 is the **signed** zip's hash, and that is exactly what gets patched into
-`$Script:ExpectedZipHash` (lines 117–133). No change to the patch logic is needed — only the sign
-step's *position* (1.2) guarantees the pin covers signed bytes. / verify: after a `-Sign` dry run,
-extract `build\Hub.zip`, run `signtool verify` on the extracted exe, and confirm
-`(Get-FileHash build\Hub.zip).Hash` equals the value now embedded in `install-hub.ps1`.
+1.3 **Confirm the hash-flow ordering AND that the COMMITTED exe is the signed one.** / build-release.ps1
+lines 84–113 + the publish block 160–176. / Because signing (step 1.2, between build@80 and stage@84)
+mutates `Hub.exe` → mutates the staged copy → mutates `Hub.zip` bytes, the SHA256 computed at line 112 is
+the **signed** zip's hash, and that is exactly what gets patched into `$Script:ExpectedZipHash`
+(lines 117–133). **Folded-in update:** `build-release.ps1` now also **commits `Hub.exe`** in the release
+commit (line 174 `git add install-hub.ps1 Hub.exe`) and **excludes `Hub.exe` from the clean-tree gate**
+(line 167 whitelist `install-hub\.ps1|Hub\.exe`) because PS2EXE output is non-deterministic and `Hub.exe`
+is git-tracked. Since signing happens BEFORE stage/zip and before that commit, the committed `Hub.exe` is
+the **signed** binary — so the gate-excluded, committed exe and the pinned zip both cover signed bytes.
+No change to the patch logic OR the commit/gate logic is needed — only the sign step's *position* (1.2).
+/ verify: after a `-Sign` dry run, extract `build\Hub.zip`, run `signtool verify` on the extracted exe,
+confirm `(Get-FileHash build\Hub.zip).Hash` equals the value embedded in `install-hub.ps1`; and after a
+`-Publish` run, `signtool verify /pa` on the committed repo-root `Hub.exe` succeeds.
 
 1.4 **Add a post-sign verification gate in the pipeline.** / build-release.ps1, immediately after 1.2. /
 Run `signtool verify /pa /q` on `$exePath`; throw if it fails so an unsigned/broken-signature build
 never reaches `gh release create`. / verify: deliberately skip signing → pipeline aborts before publish.
 
-1.5 **Update README SmartScreen section (lines 114–123) + installer messaging.** / README.md + install-hub.ps1. /
-Reframe from "unsigned, SmartScreen will block" to "signed; Authenticode verifiable via
+1.5 **Update BOTH README SmartScreen blocks + installer messaging.** / README.md + install-hub.ps1. /
+**Confirmed by grep — README has TWO places to fix, not one:** (a) the `## SmartScreen warning` section
+(lines 114–116: "`Hub.exe` is currently unsigned…") AND (b) the security bullet at **line 169**
+("`Hub.exe` is **unsigned** today. SmartScreen will block the first launch."). Miss (b) and a stale
+"unsigned" claim ships contradicting the signed reality. Reframe both from "unsigned, SmartScreen will
+block" to "signed; Authenticode verifiable via
 `signtool verify /pa Hub.exe`; SmartScreen reputation accrues with download volume and may still
 prompt early adopters — click More info → Run anyway, or verify the SHA256 from release notes."
 Do **not** claim SmartScreen is eliminated — reputation is download-history based (confirmed in the
 FAQ) even for signed binaries. Soften the first-launch warning text in `install-hub.ps1` similarly.
 / verify: README no longer says "Hub.exe is currently unsigned"; messaging promises only the
 verifiable Authenticode claim.
+
+1.6 **Bump install-hub.ps1's `$Version` default to the release tag — RELEASE-BREAKING if missed.** /
+install-hub.ps1 line 47 `[string] $Version = 'v1.5.0.0'` → `'v1.8.0.0'`. / **Confirmed by grep:**
+`build-release.ps1` patches ONLY `$Script:ExpectedZipHash` — it does **not** touch this `$Version`
+default. The published one-liner (`build-release.ps1` line 193) is
+`irm …/v1.8.0.0/install-hub.ps1 | iex`, which fetches the installer *at the v1.8.0.0 tag* and runs it
+with defaults. If `$Version` still says `v1.5.0.0`, `Get-ReleaseUrl` downloads the **old v1.5.0.0** zip,
+then `Test-ZipHash` checks it against the freshly patched **v1.8.0.0** hash → mismatch → install aborts.
+This is the same drift class as 3.1's `$Script:Version`, but worse: it gates the download URL, not a
+display string. **Best fix:** add a second patch step to `build-release.ps1` (same regex shape as the
+hash patch, lines 117–133) that rewrites the `$Version` literal from `$Tag`, so tag + hash + installer
+version move in lockstep automatically. Minimum fix: bump the literal by hand as part of the release.
+/ verify: after publish, run the literal one-liner against the v1.8.0.0 tag on a clean machine → it
+downloads the v1.8.0.0 zip and the SHA256 check PASSES (not a mismatch abort).
 
 ### Item 2 — winget package
 
@@ -166,24 +190,38 @@ open browser tab polling it could otherwise exhaust the 60-req/hr unauthenticate
 On upstream error, return cached/last-known or a soft `{ available: null, reason: 'unreachable' }` —
 never throw to the client.
 
-3.3 **Version comparison must normalize ARITY, not just cast.** / Hub-Diagnostics.ps1. / Internal
-`$Script:Version` is 4-part (`1.8.0.0`); git tags are 3-part `vX.Y.Z` because `build-release.ps1`
-line 56 strips the trailing `.0` (this release tags as `v1.8.0`). A naive string compare is wrong
+3.3 **Version comparison must normalize ARITY, not just cast — tags are MIXED arity.** / Hub-Diagnostics.ps1. /
+Internal `$Script:Version` is 4-part (`1.8.0.0`). **Confirmed `git tag --list` (2026-05):** existing tags
+are mixed arity — `v1.1.0` (3-part, legacy) but `v1.4.13.0` and `v1.5.0.0` (4-part). The 4-part form is
+now the convention because releases pass an **explicit `-Tag vX.Y.Z.0`** (the `build-release.ps1` line-56
+default *would* strip the trailing `.0` and tag 3-part, but it is overridden — see Build sequencing). So
+the normalizer must survive a tag of EITHER arity coming back from GitHub. A naive string compare is wrong
 (`'1.8.0' -gt '1.10.0'` lexically) — but a bare `[version]` cast is **also a trap**:
-`[version]'1.8.0.0' -gt [version]'1.8.0'` evaluates **`$true`** because the 3-part tag's Revision
-field is `-1` and `0 > -1`. So a fully up-to-date install would report "behind" on every release.
-*Fix:* strip the leading `v`, then **pad the tag to 4 parts** (or compare only Major/Minor/Build)
-before the `[version]` compare. / verify: smoke test must use the REAL pair —
-internal `"1.8.0.0"` vs tag `"v1.8.0"` → "up to date" (NOT behind); `"1.8.0.0"` vs `"v1.10.0"` →
-update available. (Same-arity test pairs like `1.8.0` vs `1.8.0` do not exercise the bug.)
+`[version]'1.8.0.0' -gt [version]'1.8.0'` evaluates **`$true`** because the 3-part tag's Revision field is
+`-1` and `0 > -1`. So a fully up-to-date install would report "behind" against any legacy 3-part tag.
+*Fix:* strip the leading `v`, then **pad to 4 parts** (or compare only Major/Minor/Build) before the
+`[version]` compare. The pad makes it arity-robust in both directions (3- AND 4-part tags). / verify: the
+smoke test MUST keep a mixed-arity vector (a same-arity pair does NOT exercise the bug):
+- `"1.8.0.0"` vs tag `"v1.8.0.0"` → up to date (current 4-part convention),
+- `"1.8.0.0"` vs tag `"v1.8.0"`  → up to date (proves pad against legacy 3-part like `v1.1.0`),
+- `"1.8.0.0"` vs tag `"v1.10.0.0"` → update available (numeric-not-lexical).
 
 3.4 **Register `/api/version-check` as a read-only GET route.** / Hub.ps1 `Invoke-Route`, beside
 `/api/health` and `/api/config` (lines 1950–1952). / Returns
-`{ current, latest, available:<bool>, oneLiner:"irm …/v<latest>/install-hub.ps1 | iex", releaseUrl }`.
+`{ current, latest, available:<bool>, oneLiner:"irm …/<tag_name>/install-hub.ps1 | iex", releaseUrl }`
+where `<tag_name>` is the raw GitHub `tag_name` (already includes the `v` and full arity, e.g.
+`v1.8.0.0`) — do NOT prefix another `v` or reconstruct it.
 The `oneLiner` is the exact tag-pinned command for the **latest** tag — surfaced for the user to
-copy, never executed by Hub. **Do NOT add to `$Script:StateRoutes`** (lines 45–55) — it is not state-
-changing and must not require CSRF. / verify: `curl http://127.0.0.1:8765/api/version-check` returns
-the shape above; no CSRF needed.
+copy, never executed by Hub. **DO NOT reconstruct the tag from the version number** (e.g. by re-adding
+or stripping a `.0`) — use the `tag_name` returned verbatim by `releases/latest`. Reconstructing
+reintroduces the line-56 strip-`.0` bug and could emit a one-liner pointing at a tag that does not exist.
+**Do NOT add to `$Script:StateRoutes`** (lines 45–55) — it is not state-changing and must not require
+CSRF. / verify: `curl http://127.0.0.1:8765/api/version-check` returns the shape above; no CSRF needed;
+`oneLiner` URL contains the exact `tag_name` (not a derived tag).
+
+**Shared normalize/compare helper:** the version normalize+compare logic from 3.3 MUST live in ONE
+function in `Hub-Diagnostics.ps1` (e.g. `Compare-HubVersion`) consumed by BOTH this route and the
+doctor "exe version vs latest" check (4.1) — do not duplicate the arity logic across two routes.
 
 3.5 **Frontend banner.** / wwwroot/app.js + index.html + style.css. / On load, fetch
 `/api/version-check`; if `available`, render a dismissible banner: "Update available: vX.Y.Z" + the
@@ -262,8 +300,12 @@ verify: smoke test asserts rejection.
 | 5 Portable (5.1–5.4) | **Yes** — `Read-HubConfig`/path init + `Get-HubCacheDir`. | |
 
 **Build sequencing:** all backend changes land in Hub.ps1 + `Hub-Diagnostics.ps1`, then
-`build-hub.ps1 -Version 1.8.0.0`, then `build-release.ps1 -Version 1.8.0.0 -Sign` (signs, stages,
-zips, hashes, patches installer, optionally `-Publish`). **New module registration is two-point:**
+`build-hub.ps1 -Version 1.8.0.0`, then
+`build-release.ps1 -Version 1.8.0.0 -Tag v1.8.0.0 -Sign -Publish` (signs, stages, zips, hashes, patches
+installer, commits the signed `Hub.exe` + patched installer, tags, publishes). **The explicit
+`-Tag v1.8.0.0` (four-part) is REQUIRED:** `build-release.ps1` line 56 defaults the tag to the version
+with a trailing `.0` stripped, which would wrongly tag `v1.8.0`. v1.5.0.0 shipped this way
+(`-Tag v1.5.0.0`); match it. **New module registration is two-point:**
 add `Hub-Diagnostics.ps1` to BOTH (a) the dot-source block in Hub.ps1 (~line 113) AND (b)
 `build-release.ps1`'s module copy loop (line 93) + `$expectedFiles` list (line 98) — miss (b) and the
 release zip ships without the module and `/api/doctor` 500s.
@@ -276,7 +318,7 @@ release zip ships without the module and `/api/doctor` 500s.
 - **Pin integrity:** run `install-hub.ps1 -LocalZip build\Hub.zip` (existing test path) — SHA256 check passes against the signed zip.
 - **Version-check:** smoke test stubs GitHub `latest` to a higher tag → `available:true` + correct one-liner;
   same tag → `available:false`; upstream 403 → soft `unreachable`, no throw; confirm cache prevents repeat upstream calls within the interval.
-- **Version compare:** assert `[version]` normalization (`1.8.0` vs `1.10.0`).
+- **Version compare (mixed arity — REQUIRED vector):** `"1.8.0.0"` vs `"v1.8.0.0"` → up to date; `"1.8.0.0"` vs `"v1.8.0"` → up to date (pad-against-legacy); `"1.8.0.0"` vs `"v1.10.0.0"` → update available. A same-arity-only pair does NOT exercise the `[version]` Revision=-1 trap.
 - **Doctor:** all six checks return; corrupt a scan root → that check fails; PS7-absent path reports fail.
 - **Portable:** launch with marker file / `-Portable` → `HubData\hub-config.json` AND `HubData\schema-cache.json`
   beside exe; `%LOCALAPPDATA%\Hub\` NOT created; workflows/triggers/history/repos all land under `HubData\`.
@@ -300,8 +342,12 @@ release zip ships without the module and `/api/doctor` 500s.
 - **winget feature gap** (no wizard/shortcut/autostart). *Mitigation:* document it; rely on in-app `NeedsSetup`.
 - **Portable data leak** via `Get-HubCacheDir`. *Mitigation:* explicit fix (5.3), verified by smoke.
 - **Module not staged into release zip.** *Mitigation:* two-point registration check (build-release `$expectedFiles`).
-- **Version drift** between `$Script:Version`, git tag, and winget manifest. *Mitigation:* document the
-  lockstep; doctor surfaces a mismatch.
+- **Version drift** between `$Script:Version`, **install-hub.ps1's `$Version` default**, git tag, and winget
+  manifest. The first three must agree or things break: `$Script:Version` mislabels (display), but
+  install-hub.ps1's `$Version` is **install-breaking** — it gates the download URL, so a stale value
+  downloads the wrong zip and fails the SHA256 pin (see 1.6). *Mitigation:* patch install-hub.ps1's
+  `$Version` from `$Tag` in `build-release.ps1` (lockstep with the hash patch); doctor surfaces a runtime
+  mismatch.
 
 ## Rollback plan
 - **Signing:** `-Sign` is a switch — drop it to ship an unsigned build identical to today's pipeline.
@@ -317,11 +363,14 @@ release zip ships without the module and `/api/doctor` 500s.
 
 ## Definition of Done
 - [ ] Signing decision recorded (branch A/B/C/D) in CHANGELOG.
+- [ ] Release cut with **explicit four-part tag**: `build-release.ps1 -Version 1.8.0.0 -Tag v1.8.0.0 -Sign -Publish` (tag is `v1.8.0.0`, NOT `v1.8.0`).
+- [ ] install-hub.ps1's `$Version` default == release tag (`v1.8.0.0`); the published one-liner installs on a clean machine without a SHA256 mismatch (see 1.6).
 - [ ] `build-release.ps1 -Sign` produces a `Hub.exe` where `signtool verify /pa /v` succeeds with a valid chain.
+- [ ] The `Hub.exe` **committed in the release commit** is the signed binary (`signtool verify /pa` on repo-root `Hub.exe` after publish).
 - [ ] `build\Hub.zip` SHA256 == embedded `$Script:ExpectedZipHash` (pin covers signed bytes).
 - [ ] README SmartScreen section rewritten (no "currently unsigned"); promises only verifiable Authenticode.
 - [ ] winget manifest passes `winget validate` and a local manifest install binds `127.0.0.1:8765`; PR opened to `microsoft/winget-pkgs`.
-- [ ] `/api/version-check` returns current/latest/available/one-liner; cached + rate-limited; CSRF-free; correct `[version]` comparison.
+- [ ] `/api/version-check` returns current/latest/available/one-liner; cached + rate-limited; CSRF-free; correct mixed-arity `[version]` comparison; one-liner uses the API `tag_name` verbatim (no derived tag).
 - [ ] Update banner renders the copyable one-liner; no download/auto-execute control exists.
 - [ ] `/api/doctor` returns all six checks; failing scan root / absent PS7 reported correctly; reuses cached version-check.
 - [ ] Portable mode: `-Portable` / marker writes ALL state (config, schema-cache, workflows, triggers, history, repos) beside the exe; `%LOCALAPPDATA%\Hub\` untouched.

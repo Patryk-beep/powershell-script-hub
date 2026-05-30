@@ -13,11 +13,12 @@ features:
    toggle, copy + download, scroll-lock/auto-scroll toggle.
 
 ### Overriding constraint — secrets never hit disk (read this first)
-`ConvertTo-WidgetSpec` (Hub.ps1 ~L918-923) stamps `password` / `securestring` /
-`pscredential` fields with the promise *"Sent over loopback as plain string. Not
-stored."* Presets, re-run-from-history, and any logged params all serialize the
-submitted `values` map — naively persisting them would write credentials into
-`presets\*.json` and `runs.jsonl` and break that promise.
+`ConvertTo-WidgetSpec` (Hub.ps1 `function` at **L738**; the password-widget stamp +
+promise text at **L924-926**: `$spec.widget = 'password'` then `$note = 'Sent over
+loopback as plain string. Not stored.'`) marks `password` / `securestring` /
+`pscredential` fields. Presets, re-run-from-history, and any logged params all
+serialize the submitted `values` map — naively persisting them would write
+credentials into `presets\*.json` and `runs.jsonl` and break that promise.
 
 **Rule for this phase:** before persisting a `values` map (preset save OR history
 log), drop every field whose schema widget is `password`. On apply / re-run those
@@ -28,11 +29,33 @@ The redaction must be keyed off the live schema (`Get-ParamSchema`), not a guess
 so a field renamed/retyped in the script can't leak on the next run.
 
 ## Dependencies / prerequisites
-- **Phase 0 complete**: a working v1.5 `Hub.exe` and smoke tests runnable while
-  Hub.exe is open — i.e. `Hub.ps1` honors a `-SkipMutex` switch (HANDOFF.md known
-  issue #1) so `tests/smoke-phase2-*.ps1` can boot `Hub.ps1` on an alternate port
-  (`-Port`) without colliding with the singleton mutex / running binary.
-- No new runtime dependencies. PowerShell 5.1 / 7 compatible. Files < 500 lines.
+- **Phase 0 complete (SATISFIED)**: v1.5.0.0 `Hub.exe` shipped, and `Hub.ps1` already
+  honors `-SkipMutex` (param at `Hub.ps1:18`, guard at `Hub.ps1:2186`) and `-Port`.
+  `tests/smoke-phase2-*.ps1` therefore boot `Hub.ps1` on an alternate port with
+  `-SkipMutex -Port <alt>` and run **beside a live Hub.exe** without touching the
+  singleton mutex. No work needed here — just USE these flags in every new smoke test.
+- **PS5.1 is the runtime that matters.** `Hub.exe` is PS2EXE-compiled on **PowerShell
+  5.1 / .NET Framework**, but tests run under `pwsh` 7. Code can pass tests yet break
+  the exe. Mandatory across every touched module (enforced in Step 0 below):
+  - **NO** `??` / ternary `? :` / `?.` / `ConvertFrom-Json -AsHashtable`. (Note: the
+    codebase is already `??`-free — `Hub-History.ps1:151` documents that `??` is a PS5
+    PARSE error and was avoided. Do NOT reintroduce it; the earlier plan's claim that
+    `Invoke-HistoryRoute` "already uses `??`" was incorrect.) Use `ConvertFrom-JsonHashtable`
+    (`Hub-Workflows.ps1:33`) for any JSON→hashtable load.
+  - **Array endpoints MUST serialize via `-InputObject` + `'[]'` fallback.** The pipeline
+    form `$x | ConvertTo-Json` turns an EMPTY array into JSON `null` — this exact bug bit
+    `/api/history` and was only caught at exe-build time. Copy the idiom verbatim from
+    `Invoke-WorkflowsRoute` (`Hub-Workflows.ps1:249-256`):
+    `$json = ConvertTo-Json -InputObject $list -Depth 10 -Compress; if ($null -eq $json) { $json = '[]' }`
+    then write the bytes directly to `$Context.Response.OutputStream`.
+  - **DO NOT use `Write-JsonResponse` for the presets LIST endpoint.** Verified at
+    `Hub.ps1:178-186`: `Write-JsonResponse` does `$Body | ConvertTo-Json` (the *pipeline*
+    form) — so handing it an empty `@()` produces JSON `null`, the very bug above. It is
+    also `-Depth 6`. Use it freely for the single-object POST/DELETE responses (a preset
+    record is shallow), but the GET list and the argv-preview `argv[]` array MUST use the
+    manual `-InputObject` + `'[]'` byte-write idiom. If any object response nests deeper
+    than 6 levels (it shouldn't — preset `values` are flat), write manually with `-Depth 10`.
+- No new runtime dependencies. Files < 500 lines.
 - Persistence mirrors the workflows pattern (`Save-Workflow`: write `.tmp` → delete
   target → `Move`; `ConvertFrom-JsonHashtable` on load; `Initialize-*` at startup).
 
@@ -51,23 +74,28 @@ so a field renamed/retyped in the script can't leak on the next run.
 - `C:\Users\Harrold\Documents\Claude Projects\Hub\tests\smoke-phase2-history-rerun.ps1`
 
 **Existing — backend**
-- `Hub.ps1`:
-  - dot-source block (~L109-113) → add `. Hub-Presets.ps1`.
-  - `$Script:StateRoutes` (~L45-55) → register POST/DELETE preset + (none for
-    argv-preview; see note) routes.
-  - `Invoke-Route` (~L1945-2003) → add `/api/presets`, `/api/presets/.+?`,
-    `/api/argv-preview` branches.
-  - main entry (~L2199-2203) → add `Initialize-Presets`.
-  - `New-JobRecord` (~L1326-1351) → add `values` + `rawArgs` fields (redacted copy).
-  - `Invoke-RunRoute` (~L1654-1730) → extract shared resolve/validate/build helper;
-    stash redacted params on the job record.
-  - `Start-HubJob` (~L1394-1454) → accept + carry the redacted params onto the job.
+- `Hub.ps1` (anchors verified against current source — find by symbol if drifted):
+  - dot-source block → add `. Hub-Presets.ps1` alongside the existing module
+    dot-sources (load it AFTER `Hub-Workflows.ps1` so `ConvertFrom-JsonHashtable` exists).
+  - `$Script:StateRoutes` (**L48-58**, currently 9 entries ending `'/api/git-roots'`) →
+    append `'/api/presets'` and `'/api/presets/.+?'`. (NO entry for argv-preview — see note.)
+  - `Invoke-Route` (**function at L1951**, `/api/*` 503 fallback at **L1998-2000**) → add
+    `/api/presets` (exact), `^/api/presets/([^/]+)$` (regex), and `/api/argv-preview`
+    branches BEFORE the `/api/*` 503 fallback.
+  - main entry → add `Initialize-Presets` next to `Initialize-Workflows` (**L2207**).
+  - `New-JobRecord` (**function at L1332**) → add `values` + `rawArgsUsed` fields (redacted).
+  - `Invoke-RunRoute` (**function at L1660**; `Get-ParamSchema` call at L1702) → extract
+    shared resolve/validate/build helper; stash redacted params on the job record.
+  - `Start-HubJob` (**function at L1400**; `New-JobRecord` call at L1447) → accept +
+    carry the redacted params onto the job.
+  - Helpers already present to reuse: `Get-ParamSchema` (**L962**), `Build-Argv`
+    (**L1257**), `Join-CmdLineArgs` (**L1392**).
 - `Hub-History.ps1`:
   - `Write-HubHistory` (~L31-49) → emit a redacted `params` object (+`rawArgsUsed`
     boolean, never the value) and `name`/`itemName` for display.
   - bump history entry shape; `Get-HistoryCsv` columns unchanged (params omitted
     from CSV to avoid a ragged schema).
-- `Version` bump `$Script:Version = '1.6.0.0'` (Hub.ps1 ~L24).
+- `Version` bump `$Script:Version = '1.6.0.0'` (Hub.ps1 **L27**, currently `'1.5.0.0'`).
 
 **Existing — frontend**
 - `wwwroot\index.html` — load `presets.js` + `logviewer.js` (after `app.js`,
@@ -91,6 +119,20 @@ so a field renamed/retyped in the script can't leak on the next run.
   **verify** the build manifest picks up the new module file).
 
 ## Implementation steps (numbered: what / where / how-to-verify)
+
+### Step 0. PS5.1 parse-check gate (MANDATORY — run after every touched module is edited)
+What: every backend module the exe executes (`Hub.ps1`, `Hub-Presets.ps1`,
+`Hub-History.ps1`) MUST parse-check clean under **PowerShell 5.1**, not just pwsh 7 —
+PS7-only syntax (`??`, ternary `? :`, `?.`, `ConvertFrom-Json -AsHashtable`) PARSES under
+pwsh 7 but is a PARSE error under the PS5.1 runtime the exe is compiled on, so it passes
+tests yet breaks `Hub.exe`. How: run `powershell.exe` (the Windows-5.1 host, NOT `pwsh`)
+to tokenize each file:
+```powershell
+powershell.exe -NoProfile -Command "$f='Hub-Presets.ps1'; $e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f),[ref]$null,[ref]$e); if($e){$e|%{Write-Error $_.Message};exit 1}else{'OK: '+$f}"
+```
+Run for `Hub.ps1`, `Hub-Presets.ps1`, `Hub-History.ps1`. Verify: all three print `OK:`.
+A parse error here is a hard stop — fix before proceeding to tests or rebuild. (Belt-and-
+braces grep too: `Select-String -Pattern '\?\?|-AsHashtable' Hub-Presets.ps1` must be empty.)
 
 ### A. Preset persistence module (backend → REBUILD for Hub.exe)
 1. **Create `Hub-Presets.ps1`.** What: `$Script:Presets = [hashtable]::Synchronized(@{})`;
@@ -125,11 +167,14 @@ so a field renamed/retyped in the script can't leak on the next run.
    Verify: POST without `X-Hub-CSRF` → 403 `csrf`; GET list without header → 200.
 
 ### B. Re-run from history (backend → REBUILD) — param threading, not a one-liner
-7. **Thread params onto the job record.** What: add `values` and `rawArgs` fields to
-   `New-JobRecord` (Hub.ps1 ~L1326). Populate them in `Invoke-RunRoute` *after*
-   `Build-Argv` succeeds, storing the **redacted** `values` (call `Remove-SecretValues`)
-   and a `rawArgsUsed` boolean (never the raw string). Pass through `Start-HubJob`
-   (new optional `-Values`/`-RawArgsUsed` params) onto the record. Where: Hub.ps1.
+7. **Thread params onto the job record.** What: add exactly two fields to
+   `New-JobRecord` (Hub.ps1 L1332) — `values` (hashtable, redacted) and `rawArgsUsed`
+   (bool). **Do NOT add a `rawArgs` field that holds the raw string** — the raw string
+   may embed secrets and must never reach the job record, history, or a preset; only the
+   boolean "raw mode was used" survives. Populate both in `Invoke-RunRoute` *after*
+   `Build-Argv` succeeds: `values` = `Remove-SecretValues -Schema $schema -Values $submitted`,
+   `rawArgsUsed` = `[bool]$rawArgs`. Pass through `Start-HubJob` (new optional
+   `-Values`/`-RawArgsUsed` params) onto the record. Where: Hub.ps1.
    Verify: run a fixture with params; inspect the in-memory job (smoke can't, so
    assert via the history entry in step 9).
 8. **Extract shared resolve/build helper.** What: factor the common
@@ -222,8 +267,22 @@ rebuild is a *release* (DoD) step, not a *test* prerequisite.
 ## Testing & verification (smoke tests to add under tests/)
 Mirror `tests/smoke-phases456.ps1` harness (Start-Hub via `pwsh -File Hub.ps1
 -ExtraScanRoots fixtures -Port <alt> -SkipMutex`; `New-HubSession` for CSRF;
-`Invoke-Api` helper). Back up + restore `hub-config.json` and clean
-`presets\` / `history\` between runs.
+`Invoke-Api` helper).
+
+**Run-beside-live-Hub.exe safety (mandatory in every new smoke test):**
+- **Sandbox state dirs** — before launching `Hub.ps1`, point `$env:LOCALAPPDATA` and
+  `$env:TEMP` at a throwaway temp dir for the child process (`Start-Process ... -Environment`
+  or set in the same process before start). This guarantees `presets\` / `history\` /
+  `hub.port` write under the sandbox and the test NEVER touches the real user's Hub state
+  even with a live Hub.exe running. (Belt-and-braces: still back up + restore
+  `hub-config.json` if the harness shares it; clean the sandbox dir on teardown.)
+- **Always pass `-SkipMutex -Port <alt>`** so the child boots beside Hub.exe without
+  contending for the `Global\HubInstance.<user>` singleton mutex or port 8765.
+- **Assert on HTTP STATUS, never on `$null -ne body`.** `'[]' | ConvertFrom-Json`
+  yields `$null`, and an empty/`null` JSON body also yields `$null` — so a body-null check
+  cannot distinguish 200-empty-list from 503/500. Assert `$resp.StatusCode -eq 200`
+  (and for lists, assert the parsed result is an array, e.g. `@($parsed).Count`), so the
+  exact `ConvertTo-Json` empty-array bug this phase guards against would FAIL the test.
 
 - **`smoke-phase2-presets.ps1`**: POST preset → 200; GET `?itemId=` returns it;
   saving a preset whose values include a `password` field → stored JSON has no
@@ -266,10 +325,13 @@ Mirror `tests/smoke-phases456.ps1` harness (Start-Hub via `pwsh -File Hub.ps1
 - **History entry shape change breaks old readers.** → Additive only (`params`,
   `rawArgsUsed`, `itemName` are new keys); `Read-HubHistory` / `Get-HistoryCsv`
   tolerate missing keys on pre-1.6 lines (no required-field assumptions).
-- **PS5 vs PS7** (Hub.exe is PS5; tests may run PS7). → Avoid `??`-only constructs in
-  module code paths the exe executes (note: `Invoke-HistoryRoute` already uses `??`,
-  but it runs from the dot-sourced module under whatever host launched Hub — keep new
-  code PS5-safe: no `??`, no `-AsHashtable`, use `ConvertFrom-JsonHashtable`).
+- **PS5 vs PS7** (highest after secrets — Hub.exe is PS2EXE/PS5.1; smoke tests run pwsh 7,
+  so PS7-only syntax passes tests then breaks the exe at build time). → The codebase is
+  already `??`-free (`Hub-History.ps1:151` documents `??` as a PS5 PARSE error and avoids
+  it — the earlier plan's claim that `Invoke-HistoryRoute` "already uses `??`" was WRONG;
+  do not reintroduce it). Keep new code PS5-safe: no `??` / ternary / `?.` /
+  `-AsHashtable`; use `ConvertFrom-JsonHashtable`. Enforced by **Step 0** (parse-check
+  under `powershell.exe`) before tests or rebuild.
 
 ## Rollback plan
 - Each sub-item is independent; revert per-feature.
@@ -287,6 +349,11 @@ Mirror `tests/smoke-phases456.ps1` harness (Start-Hub via `pwsh -File Hub.ps1
 - Data dirs (`presets\`, `history\`) are never destroyed on rollback.
 
 ## Definition of Done
+- [ ] **PS5.1 parse-check (Step 0) passes** for `Hub.ps1`, `Hub-Presets.ps1`,
+      `Hub-History.ps1` under `powershell.exe` — `OK:` for all three; no `??` / ternary /
+      `?.` / `-AsHashtable` anywhere in touched modules (grep clean).
+- [ ] Presets LIST endpoint and argv-preview `argv[]` serialize via the `-InputObject` +
+      `'[]'` byte-write idiom (NOT `Write-JsonResponse`); empty list returns `[]` not `null`.
 - [ ] `Hub-Presets.ps1` created (<500 lines), dot-sourced, `Initialize-Presets` wired.
 - [ ] `/api/presets` (GET list `?itemId=`, POST) + `/api/presets/<id>` (DELETE)
       working; POST/DELETE CSRF-gated (registered in `$Script:StateRoutes` **and**
@@ -302,9 +369,11 @@ Mirror `tests/smoke-phases456.ps1` harness (Start-Hub via `pwsh -File Hub.ps1
       scroll-lock toggle — all functional; `autoScroll` extended not duplicated.
 - [ ] New logic lives in `presets.js` / `logviewer.js` mixins; app.js core not bloated.
 - [ ] `smoke-phase2-presets.ps1`, `smoke-phase2-argv-preview.ps1`,
-      `smoke-phase2-history-rerun.ps1` pass under `-SkipMutex`; `smoke-phase2-engine.ps1`
-      regression passes.
+      `smoke-phase2-history-rerun.ps1` pass under `-SkipMutex -Port <alt>` with sandboxed
+      `LOCALAPPDATA`+`TEMP`, asserting **HTTP status** (not `$null -ne body`);
+      `smoke-phase2-engine.ps1` regression passes.
 - [ ] `$Script:Version` = `1.6.0.0`; CHANGELOG `[1.6.0.0]` + README tag bumped.
 - [ ] `Hub.exe` rebuilt (`build-hub.ps1 -Version 1.6.0.0`), confirmed to bundle
       `Hub-Presets.ps1` (rebuilt exe answers `/api/presets` with 200, not 503);
-      release cut via `build-release.ps1 -Version 1.6.0.0`.
+      release cut via `build-release.ps1 -Version 1.6.0.0` (which now auto-commits the
+      rebuilt `Hub.exe`).

@@ -1,5 +1,36 @@
 # Phase 3 — Differentiator: Secrets vault + workflow export/import (target v1.7.0.0)
 
+> **Refinement note (rune:plan):** This plan was re-planned through the `rune:plan` skill
+> and refined in place as a single phase file (the skill's master+phase split is
+> intentionally NOT applied — the task brief says "refine in place"). Symbol anchors are
+> authoritative; line numbers are approximate (they drift). Phase 0 shipped as **v1.5.0.0**
+> (`$Script:Version = '1.5.0.0'`, Hub.ps1 ≈L27) and added the `-SkipMutex` switch (≈L18,
+> ≈L2186), so smoke tests can run alongside a live Hub.exe.
+
+## ⚠️ PS5.1-SAFETY — NON-NEGOTIABLE (applies to every line of `Hub-Secrets.ps1` and `Hub-Export.ps1`)
+
+Hub.exe runs on the **Windows PowerShell 5.1 / .NET Framework** runtime (the child `pwsh`
+worker may be 7.x, but the host that dot-sources these modules is 5.1). A single 7.x-only
+syntax token anywhere in a dot-sourced module makes the **entire module fail to parse**,
+which silently breaks dot-sourcing and **prevents Hub.exe from starting** — this exact
+failure happened in Phase 0. The new modules MUST therefore be PS5.1-safe:
+
+- **BANNED:** `??` (null-coalescing), `?:` ternary (`cond ? a : b`), `?.` / `?[]`
+  null-conditional, `ConvertFrom-Json -AsHashtable`, `Clean {}` blocks, and any other
+  7.x-only syntax.
+- **REQUIRED substitutes:** use `if`/`else` instead of ternary; use the project helper
+  **`ConvertFrom-JsonHashtable`** (Hub.ps1 ≈L361 pattern) instead of `-AsHashtable`; guard
+  nulls with `if ($null -eq $x) { ... }`.
+- **List/array responses MUST use `ConvertTo-Json -InputObject $list` + `'[]'` fallback.**
+  In a pipeline, an empty array serializes to JSON `null`; the established fix is in
+  `Hub-Workflows.ps1` ≈L251–253:
+  `$json = ConvertTo-Json -InputObject $list -Depth 10 -Compress; if ($null -eq $json) { $json = '[]' }`.
+  This applies to **`GET /api/secrets`** (Step 2) and any list field in the import response.
+- **GATING VERIFY (new — Step 7.5):** before *any* exe build, parse-check both new modules
+  under **`powershell.exe`** (PS5.1 — NOT `pwsh`, which would not catch the 7.x tokens):
+  `powershell.exe -NoProfile -Command "[void][ScriptBlock]::Create((Get-Content -Raw .\Hub-Secrets.ps1))"`
+  (and the same for `Hub-Export.ps1`). Non-zero exit / parse error ⇒ STOP, do not build.
+
 ## Goal
 
 Add a DPAPI-encrypted secrets vault and `.hubflow` workflow export/import to Hub
@@ -12,7 +43,8 @@ security model.
    `runs.jsonl`, SSE streams, `hub-error.log`, or exported `.hubflow` files. At run
    time a referenced secret is decrypted and injected into the
    `securestring` / `pscredential` / `password` params Hub already detects
-   (`ConvertTo-WidgetSpec`, Hub.ps1 L918).
+   (`ConvertTo-WidgetSpec`, the `securestring|pscredential → widget=password` arm at
+   Hub.ps1 ≈L924–925).
 2. **UI** — manage vault entries (add / rename / delete *names* + metadata) and bind a
    secret to a password-typed param in the run form via a dropdown of secret names
    (value never displayed, never sent from the browser).
@@ -28,7 +60,8 @@ security model.
   of a preset: instead of a value travelling browser→server, a *reference* travels and
   the server resolves it.
 - Existing autodetect of `securestring`/`pscredential`/`password` → `widget=password`
-  (Hub.ps1 `ConvertTo-WidgetSpec`, L918–923). The vault binds only to `widget=password`.
+  (Hub.ps1 `ConvertTo-WidgetSpec`, type-mapping switch arm ≈L924–925). The vault binds
+  only to `widget=password`.
 - Existing primitives reused as-is: `Build-Argv`, `Start-HubJob`, `Get-ParamSchema`,
   `Get-EffectiveScanRoots`, `Write-JsonResponse`, `Invoke-SecurityMiddleware` (CSRF),
   `$Script:StateRoutes`, `ConvertFrom-JsonHashtable`, `Save-Workflow`,
@@ -112,6 +145,9 @@ Modified:
 
 - **What:** Define vault dir, name rules, DPAPI encrypt/decrypt, and a per-secret file
   format that stores ciphertext + non-secret metadata.
+- **PS5.1 reminder:** this whole module is dot-sourced into the 5.1 host — no `??`/ternary/
+  `?.`/`-AsHashtable` anywhere (see the PS5.1-SAFETY block above). Parse JSON with
+  `ConvertFrom-JsonHashtable`.
 - **Where:** new `Hub-Secrets.ps1`, dot-sourced from Hub.ps1 right after `Hub-History.ps1`
   (L113) so its `$Script:` helpers exist before route dispatch.
 - **How:**
@@ -144,6 +180,10 @@ Modified:
 - **How:**
   - `GET /api/secrets` → list of `{ name, kind, username, createdAt, updatedAt }`
     **only**. Never a `value`/`ciphertext` field. (Read-only ⇒ no CSRF, like `/api/config`.)
+    **Empty-array pitfall (PS5.1):** serialize the list with
+    `ConvertTo-Json -InputObject $list -Depth 5 -Compress; if ($null -eq $json) { $json = '[]' }`
+    (mirror `Hub-Workflows.ps1` ≈L251–253) — a piped empty array becomes JSON `null`, which
+    breaks the UI's `.map()`.
   - `POST /api/secrets` (state route) → body `{ name, kind, value, username? }`; validate
     name; encrypt `value`; write file; return metadata (no value). Duplicate name ⇒ 409.
   - `PUT /api/secrets/{name}` (state route) → rename and/or rotate value. Rename =
@@ -287,15 +327,35 @@ Modified:
   shows the trust modal and the unresolved-scripts warning. Static check in
   `smoke-canvas-editor.ps1`-style test that the new markup/handlers exist.
 
+### Step 7.5 — PS5.1 parse-check gate (MANDATORY before any build)
+
+- **What:** Prove the two new modules parse under the **5.1 host runtime** before compiling.
+  A 7.x-only token (`??`, ternary, `?.`, `-AsHashtable`) parses fine under `pwsh` 7 but
+  fails under `powershell.exe` 5.1, which is what Hub.exe embeds — and a parse failure in a
+  dot-sourced module stops Hub.exe from starting (the Phase 0 failure).
+- **Where:** repo root; no code changes — a verification command.
+- **How:** run under **`powershell.exe`** (NOT `pwsh`):
+  - `powershell.exe -NoProfile -Command "[void][System.Management.Automation.Language.Parser]::ParseFile('.\Hub-Secrets.ps1',[ref]$null,[ref]$null)"`
+  - same for `.\Hub-Export.ps1`.
+  - Also dot-source both in a clean 5.1 session to catch load-time errors:
+    `powershell.exe -NoProfile -Command ". .\Hub-Secrets.ps1; . .\Hub-Export.ps1; 'OK'"`.
+- **How-to-verify:** all three commands exit 0 and the last prints `OK`. Any parse/load
+  error ⇒ STOP; fix the offending syntax before Step 8. Do NOT build until this passes.
+
 ### Step 8 — Docs, changelog, version bump, rebuild
 
 - **What:** Document the feature + threat model; bump to 1.7.0.0.
 - **Where:** `CHANGELOG.md` (Unreleased → 1.7.0.0), `README.md` security model,
-  `HANDOFF.md`, `$Script:Version` in Hub.ps1 (L24).
+  `HANDOFF.md`, `$Script:Version` in Hub.ps1 (≈L27).
 - **How:** README security section gains a "Secrets vault" subsection (DPAPI CurrentUser,
-  write-only API, stdin injection, no export of values, echo-back limitation). Then
-  `build-hub.ps1 -Version 1.7.0.0` and `build-release.ps1 -Version 1.7.0.0`.
-- **How-to-verify:** `/api/version` returns `1.7.0.0`; UI version chip updates.
+  write-only API, stdin injection, no export of values, echo-back limitation). Confirm
+  **Step 7.5 passed**, then `build-hub.ps1 -Version 1.7.0.0` and
+  `build-release.ps1 -Version 1.7.0.0`.
+  - **Note:** `build-release.ps1` now **commits the rebuilt `Hub.exe`** as part of the
+    release cut (the exe is a tracked artifact). Expect a commit touching the binary; do not
+    separately `git add` the exe, and verify the release commit includes it.
+- **How-to-verify:** Step 7.5 green; `/api/version` returns `1.7.0.0`; UI version chip
+  updates; `git log -1 --stat` shows `Hub.exe` in the release commit.
 
 ## Backend vs frontend split (which steps need an exe rebuild)
 
@@ -309,6 +369,7 @@ Modified:
 | 5 export/import | backend route | **yes** |
 | 6 route wiring | backend (`Invoke-Route`, `$Script:StateRoutes`) | **yes** |
 | 7 UI | frontend (`wwwroot/`) | **no** (static files served from disk) |
+| 7.5 PS5.1 parse gate | verification | no (gates the build — must pass first) |
 | 8 docs/version | mixed | yes (version embedded in exe) |
 
 Net: all backend route/spawn work (Steps 2–6, 8) requires the **v1.7.0.0 rebuild**
@@ -318,6 +379,18 @@ but the new routes will return 503 until the binary's route table is rebuilt (sa
 documented in HANDOFF.md §2 for workflows). Frontend (Step 7) ships without rebuild.
 
 ## Testing & verification (smoke tests under tests/)
+
+**Smoke-test harness contract (both new suites MUST follow this):**
+- **Sandbox the environment** so tests never touch the real vault/config. Before starting
+  Hub.ps1, redirect both `TEMP` and `LOCALAPPDATA` to a fresh per-test temp dir
+  (e.g. `$env:LOCALAPPDATA = $sandbox; $env:TEMP = $sandbox`) so `%LOCALAPPDATA%\Hub\secrets\`,
+  `hub.port`, and `hub-error.log` all land in the sandbox and are deleted at teardown. A test
+  must never read or write the developer's real DPAPI secrets dir.
+- **Start Hub for the test** with `powershell.exe .\Hub.ps1 -SkipMutex -Port <free-port>`
+  (`-SkipMutex` lets it run alongside a live Hub.exe; `-Port` avoids the 8765 collision).
+- **Assert HTTP status codes** on every request (200/202/400/403/404/409/422 as specified
+  per step), not just body content — status is the primary contract.
+- Tear down: stop the spawned Hub process and remove the sandbox dir.
 
 - `tests\smoke-phase3-secrets.ps1`
   - Encrypt-at-rest: on-disk `.secret.json` base64 does NOT contain the plaintext.
@@ -336,9 +409,10 @@ documented in HANDOFF.md §2 for workflows). Frontend (Step 7) ships without reb
   - Tampered imports (literal in password field, cycle, templated scriptId, oversized
     body) → 422.
   - Out-of-root scriptId → 200 with `unresolvedScripts`.
-- Run all four existing smoke suites after the rebuild (start Hub.ps1 with `-Port` on a
-  free port, or use the `-SkipMutex` flag tracked in HANDOFF.md, to avoid the running-exe
-  mutex collision).
+- Re-run the existing smoke suites after the rebuild, each started with
+  `powershell.exe .\Hub.ps1 -SkipMutex -Port <free-port>` (the `-SkipMutex` switch shipped
+  in v1.5.0.0) so they pass even with a live Hub.exe holding the
+  `Global\HubInstance.<username>` mutex.
 
 ## Risks & mitigations — full threat model (where plaintext could leak)
 
@@ -382,6 +456,12 @@ Other risks:
 
 - [ ] Step 0 `rune:adversary` review completed; all 7 mandatory questions resolved and
       folded into the plan/implementation.
+- [ ] **PS5.1-safe:** `Hub-Secrets.ps1` and `Hub-Export.ps1` contain no `??`/ternary/`?.`/
+      `-AsHashtable`; all list responses use `ConvertTo-Json -InputObject` + `'[]'` fallback.
+- [ ] **Step 7.5 parse-gate passed** under `powershell.exe` (5.1) for both new modules
+      (ParseFile + clean dot-source) BEFORE any exe build.
+- [ ] New smoke suites sandbox `TEMP`+`LOCALAPPDATA`, start Hub with `-SkipMutex -Port`, and
+      assert HTTP status codes; they never touch the real secrets dir.
 - [ ] `Hub-Secrets.ps1` stores DPAPI-`CurrentUser`-encrypted values; on-disk blob never
       contains plaintext (smoke-verified).
 - [ ] `/api/secrets` CRUD is CSRF-gated and write-only for values; no GET returns a value.
@@ -398,4 +478,5 @@ Other risks:
 - [ ] All four existing smoke suites + the two new suites pass (Hub started with `-Port`
       / `-SkipMutex`).
 - [ ] `CHANGELOG.md`, `README.md` security model, `HANDOFF.md` updated; `$Script:Version`
-      = `1.7.0.0`; Hub.exe rebuilt and `/api/version` reports `1.7.0.0`.
+      = `1.7.0.0`; Hub.exe rebuilt and `/api/version` reports `1.7.0.0`; the
+      `build-release.ps1` commit includes the rebuilt `Hub.exe` (`git log -1 --stat`).

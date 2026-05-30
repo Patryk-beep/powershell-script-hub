@@ -7,6 +7,8 @@ function hubApp() {
     ...canvasEditorMixin(),
     ...canvasPolishMixin(),
     ...hubNotifyMixin(),
+    ...presetsMixin(),
+    ...logViewerMixin(),
     // ── Catalog state ───────────────────────────────────────────────
     items: [],
     warnings: [],
@@ -83,6 +85,8 @@ function hubApp() {
       this.restorePins();
       this.restoreNotifyPrefs();
       this.restoreCanvasPolish();
+      // Phase 2: recompute the argv preview as form inputs change (debounced in the mixin).
+      this.$watch && this.$watch('formValues', () => { this.queueArgvPreview(); });
 
       try {
         const h = await (await fetch('/api/health')).json();
@@ -406,6 +410,8 @@ function hubApp() {
       this.schema = null;
       this.formValues = {};
       this.schemaLoading = true;
+      this.presetError = '';
+      this.clearArgvPreview();    // Phase 2: drop stale preview
       this.resetRunState();
       try {
         const r = await fetch(`/api/items/${item.id}/schema`, { headers: { 'Accept': 'application/json' } });
@@ -418,6 +424,9 @@ function hubApp() {
       } finally {
         this.schemaLoading = false;
       }
+      // Phase 2: load presets for this item + compute the initial argv preview.
+      this.refreshPresets();
+      this.queueArgvPreview();
     },
 
     seedDefaults() {
@@ -725,7 +734,29 @@ function hubApp() {
       this.selected = null;
       this.schema = null;
       this.formValues = {};
+      this.presets = [];
+      this.clearArgvPreview();
       this.resetRunState();
+    },
+
+    // ── Phase 2: re-run a script from a history row ─────────────────────────────
+    async reRunFromHistory(entry) {
+      if (!entry || !entry.itemId) { return; }
+      if (entry.rawArgsUsed) {
+        this.error = 'This run used raw arguments, which are not stored — open the script and re-enter them.';
+        return;
+      }
+      const item = (this.items || []).find(i => i.id === entry.itemId);
+      if (!item) {
+        this.error = 'That script is no longer available in the catalog.';
+        return;
+      }
+      this.activeTab = 'catalog';
+      await this.selectItem(item);
+      // Overlay the (redacted) params from history; secret fields were never stored,
+      // so they stay at their seeded default / blank and must be re-entered.
+      this.formValues = Object.assign({}, this.formValues, entry.params || {});
+      this.queueArgvPreview();
     },
 
     // ── Run state ───────────────────────────────────────────────────

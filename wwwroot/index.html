@@ -11,6 +11,8 @@
   <script src="canvas-editor.js" defer></script>
   <script src="canvas-polish.js" defer></script>
   <script src="hub-notify.js" defer></script>
+  <script src="presets.js" defer></script>
+  <script src="logviewer.js" defer></script>
   <script src="app.js" defer></script>
   <script src="vendor/alpine.min.js" defer></script>
 </head>
@@ -64,6 +66,9 @@
       <symbol id="i-pin" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
       <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></symbol>
       <symbol id="i-undo" viewBox="0 0 24 24"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
+      <symbol id="i-wrap" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><path d="M3 12h15a3 3 0 0 1 0 6h-4"/><polyline points="16 16 14 18 16 20"/><line x1="3" y1="18" x2="10" y2="18"/></symbol>
     </defs>
   </svg>
 
@@ -470,6 +475,45 @@
           </form>
         </template>
 
+        <!-- Phase 2: parameter presets (typed mode only) -->
+        <div class="presets-bar" x-show="schema && schema.mode === 'typed'">
+          <div class="presets-save">
+            <input type="text" class="form-input presets-name" x-model="presetName" placeholder="Save these values as…" maxlength="60" @keydown.enter.prevent="savePreset()">
+            <button type="button" class="btn-ghost" @click="savePreset()" title="Save current values as a preset">
+              <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg><span>Save preset</span>
+            </button>
+          </div>
+          <p class="presets-error" x-show="presetError" x-text="presetError" role="alert"></p>
+          <div class="presets-list" x-show="presets.length">
+            <template x-for="p in presets" :key="p.id">
+              <span class="preset-chip">
+                <button type="button" class="preset-apply" @click="applyPreset(p)" x-text="p.name" :title="'Apply preset: ' + p.name"></button>
+                <button type="button" class="preset-del" @click="deletePreset(p.id)" :aria-label="'Delete preset ' + p.name" title="Delete preset"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+              </span>
+            </template>
+          </div>
+          <p class="presets-hint">Secret fields (password-typed, or named like “token/key/secret”) are never saved — re-enter them after applying.</p>
+        </div>
+
+        <!-- Phase 2: "What will run" — exact argv array, computed server-side -->
+        <div class="argv-preview" x-show="argvPreview">
+          <div class="argv-head">
+            <svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>
+            <span>What will run</span>
+            <span class="argv-flag" x-show="argvPreview && !argvPreview.complete">incomplete — fill required fields</span>
+          </div>
+          <div class="argv-tokens">
+            <span class="argv-tok argv-exe" x-text="argvPreview && argvPreview.exe"></span>
+            <template x-for="(a, i) in (argvPreview && argvPreview.prefix ? argvPreview.prefix : [])" :key="'p'+i">
+              <span class="argv-tok argv-prefix" x-text="a"></span>
+            </template>
+            <template x-for="(a, i) in (argvPreview && argvPreview.argv ? argvPreview.argv : [])" :key="'a'+i">
+              <span class="argv-tok argv-arg" x-text="a"></span>
+            </template>
+          </div>
+          <p class="argv-note">Each box is one discrete argument — your input is never passed through a shell.</p>
+        </div>
+
         <!-- Actions -->
         <div class="form-actions">
           <button type="button" class="btn-primary" @click="submit()" :disabled="!isFormValid() || submitting">
@@ -520,15 +564,28 @@
               <span>Output</span>
             </span>
             <span class="log-meta">
+              <input type="search" class="log-filter" x-model="logFilter" placeholder="Filter log…" spellcheck="false" x-show="logLines.length" aria-label="Filter log lines">
               <span x-show="logLines.length" x-text="logLines.length + ' line' + (logLines.length === 1 ? '' : 's')"></span>
-              <button type="button" class="log-meta-btn" :aria-pressed="autoScroll" @click="autoScroll = !autoScroll" title="Auto-scroll to bottom">
+              <button type="button" class="log-meta-btn" :aria-pressed="autoScroll" @click="autoScroll = !autoScroll" title="Auto-scroll to bottom (scroll-lock when off)">
                 <svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg>
                 <span>Follow</span>
               </button>
+              <button type="button" class="log-meta-btn" :aria-pressed="logWrap" @click="toggleLogWrap()" title="Toggle line wrap" x-show="logLines.length">
+                <svg class="icon" aria-hidden="true"><use href="#i-wrap"/></svg>
+                <span>Wrap</span>
+              </button>
+              <button type="button" class="log-meta-btn" @click="copyLog()" title="Copy full log" x-show="logLines.length">
+                <svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>
+                <span>Copy</span>
+              </button>
+              <button type="button" class="log-meta-btn" @click="downloadLog()" title="Download full log" x-show="logLines.length">
+                <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
+                <span>Download</span>
+              </button>
             </span>
           </div>
-          <pre class="log-pane" x-ref="logPane">
-            <template x-for="(entry, idx) in logLines" :key="idx"><span :class="'log-line log-' + entry.stream" x-text="entry.line + '\n'"></span></template>
+          <pre class="log-pane" :class="{ 'log-wrap': logWrap }" x-ref="logPane">
+            <template x-for="(entry, idx) in logLines" :key="idx"><span x-show="logMatches(entry.line)" :class="'log-line log-' + entry.stream" x-html="ansiToHtml(entry.line) + '\n'"></span></template>
             <template x-if="!logLines.length"><span class="log-empty">Waiting for output…</span></template>
           </pre>
         </section>
@@ -885,16 +942,22 @@
           <div>
             <table class="hist-table">
               <thead>
-                <tr><th>Time</th><th>Script/Workflow</th><th>Status</th><th>Exit</th><th>Duration</th></tr>
+                <tr><th>Time</th><th>Script/Workflow</th><th>Status</th><th>Exit</th><th>Duration</th><th></th></tr>
               </thead>
               <tbody>
                 <template x-for="(e, idx) in histEntries" :key="idx">
                   <tr>
                     <td class="hist-ts" x-text="formatMtime(e.ts)"></td>
-                    <td class="hist-id" x-text="e.workflowId ? '⚡ wf' : '⬡ ' + (e.itemId || '—')"></td>
+                    <td class="hist-id" x-text="e.workflowId ? '⚡ wf' : '⬡ ' + (e.itemName || e.itemId || '—')"></td>
                     <td><span class="badge" :class="{ 'badge-ok': e.status === 'done', 'badge-err': e.status === 'failed' || e.status === 'killed' }" x-text="e.status"></span></td>
                     <td x-text="e.exitCode !== null && e.exitCode !== undefined ? e.exitCode : '—'"></td>
                     <td x-text="histFormatDuration(e.durationMs)"></td>
+                    <td class="hist-action">
+                      <button type="button" class="hist-rerun" x-show="!e.workflowId && e.itemId" @click="reRunFromHistory(e)"
+                              :title="e.rawArgsUsed ? 'Raw args not stored — opens the script to re-enter' : 'Re-run with the same parameters'">
+                        <svg class="icon" aria-hidden="true"><use href="#i-rotate"/></svg><span>Re-run</span>
+                      </button>
+                    </td>
                   </tr>
                 </template>
               </tbody>

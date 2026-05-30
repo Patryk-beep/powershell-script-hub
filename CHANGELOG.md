@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0.0] - 2026-05-30
+
+### Added
+- **Parameter presets / saved runs** (`Hub-Presets.ps1`) — save a named set of
+  filled-in parameter values per script (`POST /api/presets`), list them
+  (`GET /api/presets?itemId=`), apply with one click, and delete
+  (`DELETE /api/presets/<id>`). CSRF-gated writes; typed-mode only.
+- **"What will run" argv preview** (`POST /api/argv-preview`) — shows the exact
+  argument array Hub will spawn, computed server-side via the same `Resolve-RunPlan`
+  helper as `/api/run` (so it can't drift), rendered as discrete chips with a
+  no-shell note. Best-effort `complete:false` on missing required fields.
+- **Re-run from history** — history entries now carry the (redacted) parameters and
+  script name; a "Re-run" button repopulates the run form. Raw-arg runs are flagged
+  (raw args are never stored).
+- **Log viewer upgrade** (`wwwroot/logviewer.js`) — in-log search/filter, XSS-safe
+  ANSI color rendering (escape-then-colorize), line-wrap toggle, copy + download,
+  and a scroll-lock/auto-scroll toggle.
+
+### Security
+- **Secret redaction at every persistence boundary** — values whose schema widget is
+  `password` (`[securestring]`/`[pscredential]`) **or** whose name matches a secret
+  heuristic (`password`/`token`/`api-key`/`secret`/`credential`/…) are stripped before
+  a preset or history entry is written to disk. Raw-argument strings are never stored
+  (only a boolean). Argv-preview masks secret values in the rendered command line.
+
 ## [1.5.0.0] - 2026-05-30
 
 ### Added
@@ -148,7 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installer URL is tag-pinned (`/v1.1.0/`) not `/main/` so a compromised `main`
   branch cannot push a malicious installer to existing users.
 
-[Unreleased]: https://github.com/Patryk-beep/powershell-script-hub/compare/v1.5.0.0...HEAD
+[Unreleased]: https://github.com/Patryk-beep/powershell-script-hub/compare/v1.6.0.0...HEAD
+[1.6.0.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.6.0.0
 [1.5.0.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.5.0.0
 [1.4.13.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.4.13.0
 [1.1.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.1.0

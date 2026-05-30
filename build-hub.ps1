@@ -8,7 +8,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version    = '1.5.0.0',
+    [string]$Version    = '1.6.0.0',
     [switch]$SkipSmoke
 )
 

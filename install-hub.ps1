@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Run via:
-        irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.5.0.0/install-hub.ps1 | iex
+        irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.6.0.0/install-hub.ps1 | iex
     Or download and invoke directly with -Install / -Update / -Uninstall.
 
     Targets PowerShell 5.1+ (Windows 10/11 default). Recommends pwsh 7 for Hub runtime.
@@ -23,7 +23,7 @@
     folders or config (config removal is opt-in).
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.5.0.0/install-hub.ps1 | iex
+    irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.6.0.0/install-hub.ps1 | iex
 
 .EXAMPLE
     .\install-hub.ps1 -Update
@@ -44,7 +44,7 @@ param(
     [string[]] $ScanRoots,
     [switch]   $Autostart,
     [switch]   $NoLaunch,
-    [string]   $Version       = 'v1.5.0.0',
+    [string]   $Version       = 'v1.6.0.0',
     [string]   $ShortcutName  = 'PowerShell Hub',
     [string]   $VerifyHash,
 
@@ -209,7 +209,7 @@ function Get-ReleaseUrl {
         if ($status -eq 403) {
             $body = Get-WebExceptionBody $_.Exception
             if ($body -match 'API rate limit exceeded') {
-                throw "GitHub API rate-limited. Try again in ~1 hour, or pass -Version v1.5.0.0 to skip 'latest' lookup."
+                throw "GitHub API rate-limited. Try again in ~1 hour, or pass -Version v1.6.0.0 to skip 'latest' lookup."
             }
             throw "GitHub API returned 403 (not rate-limit). Body: $body"
         }

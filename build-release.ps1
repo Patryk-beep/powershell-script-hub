@@ -90,13 +90,13 @@ Copy-Item -Path (Join-Path $RepoRoot 'Hub.ico')   -Destination $StagingDir -Forc
 Copy-Item -Path (Join-Path $RepoRoot 'README.md') -Destination $StagingDir -Force
 Copy-Item -Path (Join-Path $RepoRoot 'wwwroot')   -Destination $StagingDir -Recurse -Force
 # Feature modules dot-sourced by Hub.exe at runtime — must ship alongside the executable.
-foreach ($mod in @('Hub-Workflows.ps1', 'Hub-WorkflowEngine.ps1', 'Hub-Triggers.ps1', 'Hub-Git.ps1', 'Hub-History.ps1')) {
+foreach ($mod in @('Hub-Workflows.ps1', 'Hub-WorkflowEngine.ps1', 'Hub-Triggers.ps1', 'Hub-Git.ps1', 'Hub-History.ps1', 'Hub-Presets.ps1')) {
     $src = Join-Path $RepoRoot $mod
     if (Test-Path $src) { Copy-Item -Path $src -Destination $StagingDir -Force }
 }
 
 $expectedFiles = @('Hub.exe', 'Hub.ico', 'README.md', 'wwwroot\index.html', 'wwwroot\app.js', 'wwwroot\style.css',
-                   'Hub-Workflows.ps1', 'Hub-WorkflowEngine.ps1', 'Hub-Triggers.ps1', 'Hub-Git.ps1', 'Hub-History.ps1')
+                   'Hub-Workflows.ps1', 'Hub-WorkflowEngine.ps1', 'Hub-Triggers.ps1', 'Hub-Git.ps1', 'Hub-History.ps1', 'Hub-Presets.ps1')
 foreach ($f in $expectedFiles) {
     $p = Join-Path $StagingDir $f
     if (-not (Test-Path $p)) { throw "Staging missing required file: $f" }

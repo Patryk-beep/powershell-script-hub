@@ -143,6 +143,38 @@ try {
     $r = Invoke-Api -Method POST -Path '/api/argv-preview' -Body @{ itemId = $secretId; values = @{} } -Sess $sess
     if ($r.Status -eq 200) { Write-Pass 'argv-preview with empty values → 200 (best-effort)' } else { Write-Fail "argv-preview empty → $($r.Status)" }
 
+    # --- History boundary (the OTHER secret surface): run via /api/run, then assert the
+    #     history entry carries redacted params. Omit the SecureString (string→securestring
+    #     binding would fail); ApiKey is a plain [string] that the heuristic must still drop. ---
+    $r = Invoke-Api -Method POST -Path '/api/run' -Body @{ itemId = $secretId; values = @{ ApiKey = 'sk-hist-999'; Path = 'C:\histkeep' } } -Sess $sess
+    if ($r.Status -eq 202 -and $r.Body.jobId) {
+        Write-Pass 'POST /api/run (catalog) → 202'
+        $deadline = (Get-Date).AddSeconds(10); $entry = $null
+        while ((Get-Date) -lt $deadline) {
+            $h = Invoke-Api -Method GET -Path '/api/history' -Sess $sess
+            if ($h.Status -eq 200 -and $h.Body.entries) {
+                $entry = @($h.Body.entries | Where-Object { $_.itemId -eq $secretId }) | Select-Object -First 1
+                if ($entry) { break }
+            }
+            Start-Sleep -Milliseconds 400
+        }
+        if ($entry) {
+            Write-Pass 'history entry written for catalog run'
+            $hp = $entry.params
+            $pathOk   = $hp -and ($hp.Path -eq 'C:\histkeep')
+            $apiGone  = -not ($hp.PSObject.Properties.Name -contains 'ApiKey')
+            $rawFalse = ($entry.rawArgsUsed -eq $false)
+            if ($pathOk)   { Write-Pass 'history params.Path survives (job.values reached Write-HubHistory)' } else { Write-Fail "history params.Path missing — \$Job.values did NOT reach history" }
+            if ($apiGone)  { Write-Pass 'history params has NO ApiKey secret (ADV-201 on history surface)' } else { Write-Fail 'history leaked ApiKey' }
+            if (($h.Raw -notmatch 'sk-hist-999')) { Write-Pass 'history raw JSON contains no secret value' } else { Write-Fail 'history raw JSON leaked secret value' }
+            if ($rawFalse) { Write-Pass 'history rawArgsUsed=false for typed run' } else { Write-Fail "history rawArgsUsed unexpected: $($entry.rawArgsUsed)" }
+        } else {
+            Write-Fail 'no history entry appeared for catalog run within timeout'
+        }
+    } else {
+        Write-Fail "POST /api/run → $($r.Status) (expected 202)"
+    }
+
     # --- DELETE → 200, list empty ---
     if ($presetId) {
         $r = Invoke-Api -Method DELETE -Path "/api/presets/$presetId" -Sess $sess

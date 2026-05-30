@@ -111,6 +111,7 @@ function canvasEditorMixin() {
       this.cnSelNode = null; this.cnSelEdge = null; this.cnError = null;
       this.cnCanvasMode = true;
       this.wfEditMode = false;
+      this.$nextTick(() => this.cnFitScreen());   // A4: harmless when empty (early-returns)
     },
 
     cnOpenWorkflow(wf) {
@@ -158,6 +159,9 @@ function canvasEditorMixin() {
           });
         });
         this.cnPanX = 0; this.cnPanY = 0; this.cnScale = 1;
+        // A4: auto-fit ONLY on the auto-layout branch (no saved viewport to clobber).
+        // Must run after the canvas DOM renders (cnFitScreen reads getBoundingClientRect).
+        this.$nextTick(() => this.cnFitScreen());
       }
       this.cnCanvasMode = true;
     },
@@ -171,6 +175,7 @@ function canvasEditorMixin() {
     // ── Node operations ──────────────────────────────────────────────────────────
     cnAddNode(script, canvasX, canvasY) {
       if (this.cnNodes.length >= 50) { this.cnError = 'Maximum 50 nodes per workflow.'; return; }
+      this.cnSnapshot();   // A3: undo boundary
       const stepId = 's' + this.cnNextN++;
       const id = 'n-' + uuid4();
       this.cnNodes.push({
@@ -178,8 +183,8 @@ function canvasEditorMixin() {
         scriptId: script.path,
         scriptName: script.name,
         itemId: script.id,
-        x: snap(canvasX - NODE_W / 2, 8),
-        y: snap(canvasY - NODE_H / 2, 8),
+        x: this.cnSnap(canvasX - NODE_W / 2),   // A2: honors grid-snap toggle
+        y: this.cnSnap(canvasY - NODE_H / 2),
         params: {},
       });
       this.cnSelNode = id;
@@ -187,6 +192,7 @@ function canvasEditorMixin() {
     },
 
     cnRemoveNode(nodeId) {
+      this.cnSnapshot();   // A3: undo boundary
       this.cnNodes = this.cnNodes.filter(n => n.id !== nodeId);
       this.cnEdges = this.cnEdges.filter(e => e.fromNode !== nodeId && e.toNode !== nodeId);
       if (this.cnSelNode === nodeId) { this.cnSelNode = null; this.cnNodeSchema = null; }
@@ -213,6 +219,7 @@ function canvasEditorMixin() {
     // ── Edge operations ──────────────────────────────────────────────────────────
     cnAddEdge(fromNode, fromPort, toNode) {
       if (fromNode === toNode) return;
+      this.cnSnapshot();   // A3: undo boundary
       // One edge per port.
       this.cnEdges = this.cnEdges.filter(e => !(e.fromNode === fromNode && e.fromPort === fromPort));
       this.cnEdges.push({ id: 'e-' + uuid4(), fromNode, fromPort, toNode });
@@ -223,6 +230,7 @@ function canvasEditorMixin() {
     },
 
     cnRemoveEdge(edgeId) {
+      this.cnSnapshot();   // A3: undo boundary
       this.cnEdges = this.cnEdges.filter(e => e.id !== edgeId);
       if (this.cnSelEdge === edgeId) this.cnSelEdge = null;
     },
@@ -316,6 +324,7 @@ function canvasEditorMixin() {
         const node   = this.cnNodes.find(n => n.id === nodeId);
         if (!node) return;
         this.cnSelectNode(nodeId, null);
+        this.cnSnapshot();   // A3: undo boundary — once per drag, NOT per pointermove
         this.cnMoving = { nodeId, startMX: e.clientX, startMY: e.clientY, nodeX0: node.x, nodeY0: node.y };
         el.setPointerCapture(e.pointerId);
         this.cnPointerId = e.pointerId;
@@ -371,7 +380,7 @@ function canvasEditorMixin() {
 
       if (this.cnMoving) {
         const node = this.cnNodes.find(n => n.id === this.cnMoving.nodeId);
-        if (node) { node.x = snap(node.x, 8); node.y = snap(node.y, 8); }
+        if (node) { node.x = this.cnSnap(node.x); node.y = this.cnSnap(node.y); }   // A2
         this.cnMoving = null;
         return;
       }
@@ -415,6 +424,15 @@ function canvasEditorMixin() {
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
         if (this.cnSelNode)  { this.cnRemoveNode(this.cnSelNode); return; }
         if (this.cnSelEdge)  { this.cnRemoveEdge(this.cnSelEdge); return; }
+      }
+      // A3: one-level undo. ADV-101 — this branch carries its OWN field guard;
+      // the Delete/Backspace guard above is branch-local, not function-scoped.
+      if ((e.ctrlKey || e.metaKey) && e.key && e.key.toLowerCase() === 'z') {
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        e.preventDefault();
+        this.cnUndo();
+        return;
       }
       if (e.key === 'Escape') { this.cnSelNode = null; this.cnSelEdge = null; this.cnDrawEdge = null; }
     },

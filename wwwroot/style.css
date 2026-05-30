@@ -2284,3 +2284,130 @@ textarea.form-input {
 .cn-side-template-hint details { cursor: pointer; }
 .cn-side-template-hint code { display: block; font-family: var(--font-mono); color: var(--accent); margin: 2px 0; }
 
+/* ───────────────────────── Phase 1 polish ───────────────────────── */
+
+/* A2: grid-snap toggle active state (reuses .btn-ghost base) */
+.cn-snap-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--border-strong);
+}
+/* A3: undo button disabled when no snapshot */
+.cn-undo-btn:disabled { opacity: .4; cursor: default; }
+
+/* A5: display-only minimap, pinned to the canvas corner */
+.cn-minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 180px;
+  height: 120px;
+  background: color-mix(in oklab, var(--surface-1) 88%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;   /* v1: display-only, no click-to-pan */
+  overflow: hidden;
+  z-index: 4;
+}
+.cn-mini-node { fill: var(--accent); opacity: .55; }
+.cn-mini-view {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 6;
+  vector-effect: non-scaling-stroke;
+}
+
+/* C2: pin button on catalog cards (mirrors .card-hide-btn, sits left of it) */
+.card-pin-btn {
+  position: absolute;
+  top: 8px;
+  right: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity var(--dur-base) var(--ease),
+              transform var(--dur-base) var(--ease),
+              background var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.card-pin-btn .icon { width: 13px; height: 13px; }
+.item-card:hover .card-pin-btn,
+.item-card:focus-within .card-pin-btn,
+.item-card .card-pin-btn.is-pinned {
+  opacity: 1;
+  transform: scale(1);
+}
+.card-pin-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.card-pin-btn:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.card-pin-btn.is-pinned {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--border-strong);
+}
+
+/* C3: recents row */
+.recents-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.recents-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .76rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.recents-label .icon { width: 14px; height: 14px; }
+.recent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  max-width: 220px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: .8rem;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.recent-chip .icon { width: 13px; height: 13px; color: var(--fg-muted); flex: none; }
+.recent-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-chip:hover { background: var(--surface-3); border-color: var(--border-strong); }
+.recent-chip:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* Reduced-motion: drop transitions on the new interactive elements */
+@media (prefers-reduced-motion: reduce) {
+  .card-pin-btn,
+  .recent-chip { transition: none; }
+  .card-pin-btn { opacity: 1; transform: none; }
+}
+

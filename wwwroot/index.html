@@ -9,6 +9,8 @@
   <link rel="preload" as="font" type="font/woff2" href="vendor/fonts/geist-mono-latin.woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
   <script src="canvas-editor.js" defer></script>
+  <script src="canvas-polish.js" defer></script>
+  <script src="hub-notify.js" defer></script>
   <script src="app.js" defer></script>
   <script src="vendor/alpine.min.js" defer></script>
 </head>
@@ -59,6 +61,9 @@
       <symbol id="i-list-multi" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="14" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
       <symbol id="i-select" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
       <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.4 7H17V4.6a2.6 2.6 0 0 0-5.2 0V7H8.6a2.6 2.6 0 0 0 0 5.2H11V14a3 3 0 1 1-6 0v-1H3v1a5 5 0 0 0 8.8 3.3 5 5 0 0 0 8.6-3.3v-1.4a2.6 2.6 0 0 0 0-5.2z"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></symbol>
     </defs>
   </svg>
 
@@ -214,6 +219,20 @@
       </div>
     </template>
 
+    <!-- C3: Recents row (hidden during search/selection; catalog tab only) -->
+    <section class="recents-row" x-show="recentItems.length && !selected && activeTab==='catalog' && !query" aria-label="Recently opened">
+      <span class="recents-label">
+        <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>
+        <span>Recent</span>
+      </span>
+      <template x-for="item in recentItems" :key="'recent-' + item.id">
+        <button type="button" class="recent-chip" @click="selectItem(item)" :title="item.name">
+          <svg class="icon" aria-hidden="true"><use :href="item.kind === 'exe' ? '#i-box' : '#i-terminal'"/></svg>
+          <span x-text="item.name"></span>
+        </button>
+      </template>
+    </section>
+
     <!-- Items grid -->
     <section class="items-grid" x-show="!selected && filteredItems.length" aria-label="Available scripts and tools">
       <template x-for="(item, idx) in filteredItems" :key="item.id">
@@ -227,6 +246,19 @@
           @keydown.space.prevent="selectItem(item)"
           :style="'animation-delay:' + Math.min(idx * 18, 240) + 'ms'"
           :aria-label="'Open ' + item.name + (item.cloudOnly ? ' (cloud-only)' : '') + (isHidden(item) ? ' (hidden)' : '')">
+
+          <button
+            type="button"
+            class="card-pin-btn"
+            :class="{ 'is-pinned': isPinned(item) }"
+            @click.stop="togglePin(item)"
+            @keydown.enter.stop="togglePin(item)"
+            @keydown.space.stop="togglePin(item)"
+            :title="isPinned(item) ? 'Unpin' : 'Pin to top'"
+            :aria-label="isPinned(item) ? 'Unpin ' + item.name : 'Pin ' + item.name"
+            :aria-pressed="isPinned(item)">
+            <svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg>
+          </button>
 
           <button
             type="button"
@@ -555,6 +587,15 @@
               <button type="button" class="btn-ghost cn-fit-btn" @click="cnFitScreen()" title="Fit to screen">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6"/></svg>
               </button>
+              <button type="button" class="btn-ghost cn-snap-btn" :class="{ 'is-active': cnSnapEnabled }"
+                      @click="cnSnapEnabled = !cnSnapEnabled" :aria-pressed="cnSnapEnabled"
+                      :title="cnSnapEnabled ? 'Grid snap: on (click to disable)' : 'Grid snap: off (click to enable)'">
+                <svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg>
+              </button>
+              <button type="button" class="btn-ghost cn-undo-btn" @click="cnUndo()" :disabled="!cnUndoSnapshot"
+                      title="Undo last change (Ctrl+Z)">
+                <svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg>
+              </button>
               <span class="cn-node-count" x-show="cnNodes.length" x-text="cnNodes.length + ' node' + (cnNodes.length===1?'':'s')"></span>
               <button type="button" class="btn-primary" @click="cnSave()" :disabled="wfSaving">
                 <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>
@@ -676,6 +717,21 @@
                     <p>Drag scripts from the left panel onto the canvas</p>
                   </div>
                 </template>
+
+                <!-- A5: display-only minimap (viewBox bound via .camel — HTML lowercases attrs) -->
+                <svg class="cn-minimap" x-show="cnNodes.length"
+                     x-bind:view-box.camel="cnMinimap ? cnMinimap.viewBox : '0 0 1 1'"
+                     aria-hidden="true">
+                  <template x-if="cnMinimap">
+                    <g>
+                      <template x-for="mn in cnMinimap.nodes" :key="mn.id">
+                        <rect class="cn-mini-node" :x="mn.x" :y="mn.y" :width="mn.w" :height="mn.h" rx="8"/>
+                      </template>
+                      <rect class="cn-mini-view" :x="cnMinimap.view.x" :y="cnMinimap.view.y"
+                            :width="cnMinimap.view.w" :height="cnMinimap.view.h"/>
+                    </g>
+                  </template>
+                </svg>
               </div>
 
               <!-- Side panel: selected node params -->

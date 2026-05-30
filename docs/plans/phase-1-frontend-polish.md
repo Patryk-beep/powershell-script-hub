@@ -121,8 +121,12 @@ the compiled binary:
   (top), and **move-start** — in `cnWrapPointerDown`'s node-move branch (~line 318), once per
   drag, NOT per `pointermove`. Skip pan/zoom/selection (non-destructive). In `cnKeyDown`
   (`canvas-editor.js` ~line 411) add: if `(e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'`
-  and not in a field → `e.preventDefault(); this.cnUndo();`. **Reuse the exact INPUT/TEXTAREA/
-  SELECT guard already present in `cnKeyDown`.**
+  and not in a field → `e.preventDefault(); this.cnUndo();`. **The new Ctrl+Z branch MUST carry
+  its OWN field guard** — `const tag=(e.target&&e.target.tagName)||''; if (tag==='INPUT'||
+  tag==='TEXTAREA'||tag==='SELECT') return;`. **(ADV-101 correction:** the existing field guard in
+  `cnKeyDown` is **branch-local to the Delete/Backspace block** — `canvas-editor.js:414-415` — NOT
+  at function scope, so there is no top-level guard to "reuse." `if (!this.cnCanvasMode) return;`
+  at line 412 already scopes Ctrl+Z to canvas mode.)
 - *Where:* `canvas-polish.js`, `canvas-editor.js`.
 - *Verify:* Add node → Ctrl+Z removes it. Move node → Ctrl+Z returns it to start position.
   Delete edge → Ctrl+Z restores it. Second consecutive Ctrl+Z does nothing (one level).
@@ -181,9 +185,14 @@ the compiled binary:
   denying it never re-prompts and never errors.
 
 **B3. Fire the toast on run finish (unfocused only)**
-- *What:* Add `notifyRunDone(name, status, exitCode)` to the mixin. In `openStream()`'s `end`
-  listener (`app.js` ~line 787) and its `onerror` branch, after setting `ended`/`endStatus`,
-  call `this.notifyRunDone(this.selected?.name, this.endStatus, this.exitCode)`. The helper
+- *What:* Add `notifyRunDone(name, status, exitCode)` to the mixin. The **`end` listener
+  (`app.js:787-796`) is the SINGLE primary toast site** — after it sets `ended`/`endStatus`/
+  `exitCode`, call `this.notifyRunDone(this.selected?.name, this.endStatus, this.exitCode)`.
+  **(ADV-102 correction:** the `onerror` branch — `app.js:797-802` — sets **neither** `ended` nor
+  `endStatus`, only `this.error` inside `if (!this.ended)`. Do NOT call with `this.endStatus`
+  there or it passes `undefined` and can double-toast on a normal close. Instead, inside the
+  existing `if (!this.ended)` guard, call `this.notifyRunDone(this.selected?.name, 'error')` with
+  an explicit literal status.) The helper
   no-ops if `this.windowFocused` is true (user is already watching), if permission isn't granted,
   or if `notifyEnabled === false`. **Security:** the toast body contains **only the script name +
   status/exit code** — never arguments, never output lines. Title e.g. `"Hub — Run finished"`,
@@ -230,8 +239,11 @@ the compiled binary:
   `hiddenIds` already relies on.
 
 **C2. Pinned-first sort + pin button on cards**
-- *What:* In `filteredItems` getter (`app.js` ~line 342), after the existing sort, apply a stable
-  **pinned-first** partition: pinned items (in their existing sort order) precede unpinned. Add a
+- *What:* In `filteredItems` getter (`app.js` ~line 342), after the existing sort **and after the
+  hidden-filter**, apply a stable **pinned-first** partition: pinned items (in their existing sort
+  order) precede unpinned. **(ADV-103:** run the partition AFTER the hidden-filter and do not
+  disturb the existing all-items-hidden guard at `app.js:250`, or a pinned+hidden item could
+  resurface.) Add a
   pin button to each `.item-card` (`index.html` ~line 231, mirroring `card-hide-btn`):
   `@click.stop="togglePin(item)"`, `:class="{ 'is-pinned': isPinned(item) }"`, with a star/pin
   glyph (add an `#i-pin` symbol to the sprite, or reuse `#i-bolt`). Record recents:

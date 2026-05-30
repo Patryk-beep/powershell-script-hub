@@ -28,7 +28,7 @@ detailed `rune:plan`-style document. Ordering is **dependency-driven**, not impa
 - **One open judgment call:** if Hub will be shown to anyone before v1.7, pull **code signing (Phase 4)** forward to right after Phase 0 — SmartScreen ruins first impressions regardless of feature quality.
 
 ## Status
-- [ ] Phase 0 — v1.5.0.0
+- [~] Phase 0 — v1.5.0.0 — **code complete + reviewed on branch `phase-0-ship-v1.5.0.0`** (5 commits; all 4 smoke tests pass; isolation verified; empty-`/api/history` bug fixed). **Blocked on:** `ps2exe` not installed → exe rebuild can't run. **Gated:** publish (`build-release.ps1 -Version 1.5.0.0 -Tag v1.5.0.0 -Publish`) awaiting user OK.
 - [ ] Phase 1 — frontend polish
 - [ ] Phase 2 — v1.6.0.0
 - [ ] Phase 3 — v1.7.0.0

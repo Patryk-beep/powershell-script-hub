@@ -355,8 +355,11 @@ function Get-SchemaCache {
     try {
         $raw = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
         if ([string]::IsNullOrWhiteSpace($raw)) { return @{} }
-        $obj = $raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-        if ($null -eq $obj) { return @{} }
+        # PS5.1-safe: '-AsHashtable' is PS6+ only and throws under the PS2EXE/PS5.1 runtime,
+        # which made the schema cache un-readable in the exe (every /api/items did a full cold
+        # AST re-scan). Use the existing recursive converter instead.
+        $obj = ConvertFrom-JsonHashtable ($raw | ConvertFrom-Json -ErrorAction Stop)
+        if ($null -eq $obj -or $obj -isnot [hashtable]) { return @{} }
         return $obj
     } catch {
         Write-HubError $_

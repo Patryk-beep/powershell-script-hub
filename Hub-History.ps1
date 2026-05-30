@@ -148,10 +148,14 @@ function Invoke-HistoryRoute {
         return
     }
     $qs         = $Context.Request.QueryString
-    $limit      = [int]($qs['limit']      ?? 50); if ($limit -le 0 -or $limit -gt 500) { $limit = 50 }
-    $offset     = [int]($qs['offset']     ?? 0);  if ($offset -lt 0) { $offset = 0 }
-    $status     = [string]($qs['status']     ?? '')
-    $wfId       = [string]($qs['workflowId'] ?? '')
+    # PS5.1-compatible: '??' (null-coalescing) is PS7-only and a PARSE error under the
+    # PS2EXE/PS5.1 runtime — which silently breaks dot-sourcing this whole module.
+    $rawLimit   = $qs['limit']
+    $limit      = if ($rawLimit)  { [int]$rawLimit }  else { 50 }; if ($limit -le 0 -or $limit -gt 500) { $limit = 50 }
+    $rawOffset  = $qs['offset']
+    $offset     = if ($rawOffset) { [int]$rawOffset } else { 0 };  if ($offset -lt 0) { $offset = 0 }
+    $status     = [string]$qs['status']
+    $wfId       = [string]$qs['workflowId']
     $csv        = $qs['format'] -eq 'csv'
 
     $result = Read-HubHistory -Limit $limit -Offset $offset -Status $status -WorkflowId $wfId

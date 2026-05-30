@@ -157,18 +157,22 @@ if ($existingTag) {
     throw "Tag $Tag already exists. Delete it first (git tag -d $Tag; git push origin :refs/tags/$Tag) or pick a new tag."
 }
 
-# Verify clean working tree before committing the patched installer
+# Verify clean working tree before committing the release artifacts.
+# Two files are EXPECTED to be modified at this point and are committed together as the
+# release commit: install-hub.ps1 (hash-patched above) and Hub.exe (rebuilt at step 1 —
+# PS2EXE output is non-deterministic, so the tracked binary always shows as modified).
+# Anything else dirty means an unstaged change that must be committed first.
 $dirty = & git -C $RepoRoot status --porcelain
 if ($dirty) {
-    $other = $dirty -split "`n" | Where-Object { $_ -and $_ -notmatch ' install-hub\.ps1\s*$' }
+    $other = $dirty -split "`n" | Where-Object { $_ -and $_ -notmatch ' (install-hub\.ps1|Hub\.exe)\s*$' }
     if ($other) {
-        throw "Working tree has uncommitted changes besides install-hub.ps1:`n$($other -join "`n")"
+        throw "Working tree has uncommitted changes besides install-hub.ps1 / Hub.exe:`n$($other -join "`n")"
     }
 }
 
-Write-Step 'Committing patched install-hub.ps1...'
-& git -C $RepoRoot add install-hub.ps1
-& git -C $RepoRoot commit -m "Release $Tag — embed Hub.zip SHA256 $zipHash"
+Write-Step 'Committing release artifacts (install-hub.ps1 + Hub.exe)...'
+& git -C $RepoRoot add install-hub.ps1 Hub.exe
+& git -C $RepoRoot commit -m "Release $Tag — rebuild Hub.exe + embed Hub.zip SHA256 $zipHash"
 if ($LASTEXITCODE -ne 0) { throw "git commit failed (exit $LASTEXITCODE)." }
 
 Write-Step "Tagging $Tag..."

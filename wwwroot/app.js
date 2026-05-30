@@ -5,6 +5,8 @@
 function hubApp() {
   return {
     ...canvasEditorMixin(),
+    ...canvasPolishMixin(),
+    ...hubNotifyMixin(),
     // ── Catalog state ───────────────────────────────────────────────
     items: [],
     warnings: [],
@@ -78,6 +80,9 @@ function hubApp() {
     async init() {
       this.csrfToken = this.readCsrfCookie();
       this.restorePrefs();
+      this.restorePins();
+      this.restoreNotifyPrefs();
+      this.restoreCanvasPolish();
 
       try {
         const h = await (await fetch('/api/health')).json();
@@ -371,8 +376,22 @@ function hubApp() {
         case 'name-asc':
         default:           arr.sort((a, b) => a.name.localeCompare(b.name));
       }
+      // C2 (ADV-103): pinned-first partition — AFTER sort AND after the hidden-filter
+      // above, so a pinned+hidden item can't resurface. Stable within each group.
+      if (this.pinnedIds && this.pinnedIds.length) {
+        const pinned = arr.filter(i => this.isPinned(i));
+        const rest   = arr.filter(i => !this.isPinned(i));
+        return pinned.concat(rest);
+      }
       return arr;
     },
+
+    // Phase 1: inline accessors delegating to mixin methods. Getters defined inside
+    // a spread mixin (...canvasPolishMixin()) get flattened to stale values; inline
+    // getters in this literal are preserved as accessors and stay reactive (same as
+    // filteredItems above). See cnMinimapData()/recentItemsData() in the mixins.
+    get cnMinimap()   { return this.cnMinimapData(); },
+    get recentItems() { return this.recentItemsData(); },
 
     resetFilters() {
       this.query = '';
@@ -383,6 +402,7 @@ function hubApp() {
     // ── Selection ───────────────────────────────────────────────────
     async selectItem(item) {
       this.selected = item;
+      this.pushRecent(item.id);   // C2: record recents
       this.schema = null;
       this.formValues = {};
       this.schemaLoading = true;
@@ -602,7 +622,14 @@ function hubApp() {
           if (!r.ok) return;
           const run = await r.json();
           this.wfRun = run;
-          if (run.status !== 'running') { clearInterval(this.wfRunPolling); this.wfRunPolling = null; }
+          if (run.status !== 'running') {
+            clearInterval(this.wfRunPolling); this.wfRunPolling = null;
+            // B5: parity with catalog SSE — workflows poll, so toast on terminal transition.
+            // Engine run-level success status is 'done' (Hub-WorkflowEngine.ps1:181),
+            // terminal set = done|failed|killed. (No exitCode at run level — status is authoritative.)
+            this.notifyRunDone(this.wfSelected && this.wfSelected.name, run.status);
+            this.setTitleProgress(run.status === 'done' ? 'done' : 'failed');
+          }
         } catch (e) { /* ignore poll errors */ }
       };
       this.wfRunPolling = setInterval(poll, 800);
@@ -750,6 +777,7 @@ function hubApp() {
       this.error = null;
       this.resetRunState();
       this.submitting = true;
+      this.requestNotifyPermission();   // B2: request on the run-button gesture
       try {
         const body = { itemId: this.selected.id };
         if (this.schema && this.schema.mode === 'raw') {
@@ -768,6 +796,7 @@ function hubApp() {
         const { jobId } = await r.json();
         this.currentJob = jobId;
         this.openStream(jobId);
+        this.setTitleProgress('running');   // B4
       } catch (e) {
         this.error = 'Submit error: ' + (e && e.message ? e.message : e);
         this.submitting = false;
@@ -793,10 +822,18 @@ function hubApp() {
         this.ended = true;
         this.submitting = false;
         this.closeStream();
+        // B3/B4: single primary toast site. (ADV-102: the `end` handler is the
+        // only place endStatus/exitCode are set — never toast from onerror with them.)
+        const ok = this.exitCode === 0 || this.endStatus === 'done';   // exitCode authoritative; status token is 'done' (Hub.ps1:1586)
+        this.notifyRunDone(this.selected && this.selected.name, this.endStatus, this.exitCode);
+        this.setTitleProgress(ok ? 'done' : 'failed');
       });
       es.onerror = () => {
         if (!this.ended) {
           this.error = 'Stream connection lost';
+          // ADV-102: explicit literal status here — endStatus is NOT set on this path.
+          this.notifyRunDone(this.selected && this.selected.name, 'error');
+          this.setTitleProgress('failed');
         }
         this.closeStream();
       };

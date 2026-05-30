@@ -1,5 +1,5 @@
 # Script & Tool Hub Dashboard
-# Version 1.0.0.0
+# Version 1.5.0.0
 # Source. Compiled to Hub.exe via build-hub.ps1 (Phase 6).
 
 param(
@@ -12,7 +12,10 @@ param(
     [int]$FastSweepSeconds = 0,
 
     # Override the default port (8765) — used by tests to avoid conflicting with a running Hub.
-    [int]$Port = 0
+    [int]$Port = 0,
+
+    # Test-only: bypass the single-instance mutex so a smoke instance can run beside Hub.exe.
+    [switch]$SkipMutex
 )
 
 Set-StrictMode -Version Latest
@@ -21,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$Script:Version          = '1.4.13.0'
+$Script:Version          = '1.5.0.0'
 $Script:Port             = if ($Port -gt 0) { $Port } else { 8765 }
 $Script:Listener         = $null
 $Script:ListenerHealthy  = $true
@@ -2177,9 +2180,11 @@ trap {
     exit 1
 }
 
-if (-not (Test-SingleInstance)) {
-    # Existing instance focused, exit cleanly.
-    exit 0
+if (-not $SkipMutex) {
+    if (-not (Test-SingleInstance)) {
+        # Existing instance focused, exit cleanly.
+        exit 0
+    }
 }
 
 # Load config (K12) — sets $Script:NeedsSetup if missing/malformed.

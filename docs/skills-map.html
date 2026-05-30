@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code — Installed Skills Map</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#11151f; --ink:#e6e9ef; --muted:#8b93a7;
+    --line:#1e2533; --chip:#1a2030; --chiph:#232c40;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:28px 32px 18px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:linear-gradient(180deg,#0b0e14,#0b0e14ee);backdrop-filter:blur(6px);z-index:5}
+  h1{margin:0;font-size:22px;letter-spacing:.3px}
+  .sub{color:var(--muted);margin-top:6px;font-size:13px}
+  .controls{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  #search{flex:1;min-width:220px;max-width:420px;background:var(--panel);border:1px solid var(--line);
+    color:var(--ink);padding:9px 12px;border-radius:9px;outline:none}
+  #search:focus{border-color:#3a4a6b}
+  .count{color:var(--muted);font-size:12px}
+  .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .legend button{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    padding:5px 11px;border-radius:999px;font-size:12px;display:flex;align-items:center;gap:7px;transition:.15s}
+  .legend button:hover{border-color:#3a4a6b}
+  .legend button.off{opacity:.35}
+  .dot{width:9px;height:9px;border-radius:50%}
+  main{padding:24px 32px 80px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px;align-items:start}
+  .fam{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    border-top:3px solid var(--accent)}
+  .fam h2{margin:0;padding:14px 16px 10px;font-size:15px;display:flex;align-items:center;gap:9px}
+  .fam h2 .n{margin-left:auto;color:var(--muted);font-size:12px;font-weight:400}
+  .fam .desc{color:var(--muted);padding:0 16px 12px;font-size:12.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 16px}
+  .chip{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-size:12px;
+    cursor:pointer;transition:.12s}
+  .chip:hover,.chip.sel{background:var(--chiph);border-color:var(--accent)}
+  .chip b{font-weight:600}
+  /* shared detail panel (replaces clipped per-chip tooltips) */
+  #detail{position:fixed;left:0;right:0;bottom:0;z-index:20;background:#0f1422;
+    border-top:2px solid var(--accent,#3a4a6b);padding:14px 32px;
+    box-shadow:0 -10px 30px #0009;transform:translateY(110%);transition:transform .18s;display:flex;gap:14px;align-items:flex-start}
+  #detail.show{transform:translateY(0)}
+  #detail .dname{font-weight:700;white-space:nowrap}
+  #detail .dfam{color:var(--muted);font-size:12px;white-space:nowrap}
+  #detail .ddesc{flex:1;font-size:13px;line-height:1.5}
+  #detail .dclose{cursor:pointer;color:var(--muted);font-size:18px;line-height:1;padding:0 4px}
+  #detail .dclose:hover{color:var(--ink)}
+  .hidden{display:none!important}
+  footer{color:var(--muted);font-size:12px;padding:0 32px 40px;text-align:center}
+  a{color:#7aa2f7}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧭 Claude Code — Installed Skills Map</h1>
+  <div class="sub">Every skill currently available to this session, grouped by family. Hover a chip for what it does. Generated <span id="date"></span>.</div>
+  <div class="controls">
+    <input id="search" placeholder="Filter skills…  (e.g. 'test', 'deploy', 'memory')" autocomplete="off">
+    <span class="count" id="count"></span>
+  </div>
+  <div class="legend" id="legend"></div>
+</header>
+<main id="grid"></main>
+<div id="detail">
+  <span class="dname"></span><span class="dfam"></span>
+  <span class="ddesc"></span><span class="dclose" onclick="hideDetail()">✕</span>
+</div>
+<footer>
+  Tip: families are toggleable in the legend above. This is a static snapshot — the live list lives in your session's skill registry.
+</footer>
+
+<script>
+const FAMILIES = [
+  {
+    id:"builtin", name:"Built-in Claude Code", color:"#7aa2f7",
+    desc:"Core commands shipped with the harness — review, run, schedule, config.",
+    skills:[
+      ["code-review","Review the current diff/PR for bugs + cleanups at a chosen effort level. --comment posts to PR, --fix applies."],
+      ["simplify","Review changed code for reuse/simplification/efficiency and apply the fixes (quality only, no bug hunting)."],
+      ["review","General code review pass over changes."],
+      ["security-review","Security-focused review of the current changes."],
+      ["verify","Verify a change actually works by running the app and observing behavior."],
+      ["run","Launch and drive this project's app to see a change working live."],
+      ["init","Initialize a new CLAUDE.md with codebase documentation."],
+      ["loop","Run a prompt or slash command on a recurring interval, or self-paced."],
+      ["schedule","Create/manage scheduled remote agents (cron routines)."],
+      ["claude-api","Build, debug, optimize Claude API / Anthropic SDK apps; migrate model versions."],
+      ["update-config","Configure the harness via settings.json — hooks, permissions, env vars."],
+      ["keybindings-help","Customize keyboard shortcuts in keybindings.json."],
+      ["fewer-permission-prompts","Scan transcripts and build a permission allowlist to reduce prompts."],
+      ["statusline-setup","Configure the status line setting."]
+    ]
+  },
+  {
+    id:"super", name:"Superpowers (process)", color:"#bb9af7",
+    desc:"Discipline skills that define HOW to approach work — brainstorm, plan, TDD, debug.",
+    skills:[
+      ["using-superpowers","Entry skill: how to find and invoke skills."],
+      ["brainstorming","Structured ideation before planning a solution."],
+      ["writing-plans","Author durable implementation plans."],
+      ["executing-plans","Work through an approved plan step by step."],
+      ["test-driven-development","Red→green→refactor TDD discipline."],
+      ["systematic-debugging","Hypothesis-driven root-cause debugging."],
+      ["verification-before-completion","Prove work is done before claiming it."],
+      ["requesting-code-review","Package a change for review."],
+      ["receiving-code-review","Process and act on review feedback."],
+      ["dispatching-parallel-agents","Fan work out to parallel subagents."],
+      ["subagent-driven-development","Drive a feature via coordinated subagents."],
+      ["using-git-worktrees","Isolate parallel work in git worktrees."],
+      ["finishing-a-development-branch","Wrap up and merge a feature branch."],
+      ["writing-skills","Author new Superpowers skills."]
+    ]
+  },
+  {
+    id:"rune", name:"Rune (dev workflow)", color:"#7dcfff",
+    desc:"Large orchestration suite: implement, plan, review, secure, refactor, ship.",
+    skills:[
+      ["cook","Feature implementation orchestrator — full TDD cycle. Default route for ~70% of code changes."],
+      ["plan","Create structured multi-phase implementation plans."],
+      ["brainstorm","Generate 2-3 approaches with trade-offs; hands off to plan."],
+      ["adversary","Pre-implementation red-team of a plan — edge cases, security, scale."],
+      ["ba","Business analyst — deep requirement elicitation before planning."],
+      ["debug","Root-cause analysis only; hands diagnosis to fix."],
+      ["fix","Apply code changes from a diagnosis or review findings."],
+      ["review","Code-quality review; every finding has file:line."],
+      ["review-intake","Process external PR/review feedback in priority order."],
+      ["preflight","Pre-commit quality gate; BLOCK stops the commit."],
+      ["sentinel","Security gatekeeper — secrets, OWASP, deps; BLOCK stops pipeline."],
+      ["sentinel-env","Environment pre-flight — OS, runtimes, ports, env vars."],
+      ["sast","Static-analysis runner (ESLint/Semgrep/Bandit/etc), normalized severity."],
+      ["audit","8-dimension project health audit → AUDIT-REPORT.md."],
+      ["autopsy","Quantified health scores per module across 6 dimensions."],
+      ["completion-gate","Lie detector — validates every completion claim has evidence."],
+      ["constraint-check","Audits whether HARD-GATEs/constraints were actually followed."],
+      ["hallucination-guard","Catches hallucinated imports / phantom functions post-generation."],
+      ["integrity-check","Detects adversarial content / prompt injection in .rune files."],
+      ["logic-guardian","Protects complex business logic from accidental deletion."],
+      ["scope-guard","Flags out-of-scope file changes vs the plan (advisory)."],
+      ["scout","Fast read-only codebase scanner before planning/fixing."],
+      ["scaffold","Bootstrap a project 0→production-ready."],
+      ["onboard","Auto-generate project context (CLAUDE.md + .rune)."],
+      ["rescue","Legacy refactoring orchestrator for messy codebases."],
+      ["surgeon","Incremental refactor — one module per session, tests after each edit."],
+      ["safeguard","Build safety nets (characterization tests) before refactoring."],
+      ["graft","Transplant code/features between contexts."],
+      ["improve-architecture","Architecture improvement pass."],
+      ["db","Database workflow — migrations, breaking-change detection, SQLi scan."],
+      ["dependency-doctor","Dependency health — outdated, CVEs, breaking-change risk."],
+      ["perf","Performance regression gate — N+1, sync-in-async, leaks."],
+      ["test","TDD test writer — FAILING tests first, then verify green."],
+      ["verification","Universal verification runner — lint, types, tests, build."],
+      ["deploy*","(deploy/launch/watchdog family) ship to platform + verify live."],
+      ["watchdog","Post-deploy HTTP health + response-time checks."],
+      ["docs","Auto-generate & maintain project docs."],
+      ["docs-seeker","Documentation lookup — API signatures, examples."],
+      ["research","Web research, min 3 sources per conclusion."],
+      ["trend-scout","Market intelligence — competitors, tech trends."],
+      ["problem-solver","McKinsey-style frameworks with bias detection."],
+      ["sequential-thinking","Multi-variable interdependent analysis."],
+      ["context-engine","Context-window management & compaction triggers."],
+      ["context-pack","Structured handoff briefings between agents."],
+      ["session-bridge","Cross-session context persistence to .rune files."],
+      ["journal","Persistent decision/progress/ADR tracking."],
+      ["neural-memory","Cross-session cognitive persistence via Neural Memory MCP."],
+      ["team","Multi-agent meta-orchestrator for large tasks (5+ files)."],
+      ["worktree","Git worktree lifecycle for parallel streams."],
+      ["git","Semantic commits, PR descriptions, changelogs, tags."],
+      ["skill-forge","The skill that builds Rune skills (TDD-driven)."],
+      ["skill-router","Routes every action through the correct skill."],
+      ["browser-pilot","Playwright browser automation — navigate, screenshot, a11y."],
+      ["mcp-builder","Build MCP servers from specs (TS/Python)."],
+      ["doc-processor","Generate/parse PDF, DOCX, XLSX, PPTX, CSV."],
+      ["asset-creator","Code-based visual assets — SVG icons, OG images, banners."],
+      ["design","Design-system generator → .rune/design-system.md."],
+      ["marketing","Landing copy, social posts, SEO meta, scripts."],
+      ["slides","Marp slide decks from JSON schema."],
+      ["video-creator","Video planning — scripts, storyboards, shot lists."],
+      ["retro","Engineering retrospective from commit history (read-only)."]
+    ]
+  },
+  {
+    id:"ruflo", name:"Ruflo / claude-flow", color:"#9ece6a",
+    desc:"Swarm orchestration, RAG memory, autopilot, security audit, testgen, docs.",
+    skills:[
+      ["ruflo-status","Show ruflo system status."],
+      ["ruflo-doctor","Diagnostics for the ruflo install."],
+      ["init-project","Initialize ruflo in a project."],
+      ["discover-plugins","Find available ruflo plugins."],
+      ["witness","Cryptographically-signed witness manifest of fixes."],
+      ["swarm","Launch a coordinated agent swarm."],
+      ["swarm-init","Initialize swarm topology."],
+      ["watch / monitor-stream","Live swarm monitoring."],
+      ["autopilot","Autonomous task completion coordinator."],
+      ["autopilot-loop","Self-driving /loop autopilot."],
+      ["autopilot-predict","Predict next autopilot actions."],
+      ["ruflo-loop / cron-schedule","Background loop & cron workers."],
+      ["loop-worker","Worker that runs scheduled jobs."],
+      ["recall / memory-search","RAG memory retrieval (hybrid + Graph RAG)."],
+      ["ruflo-memory / memory-bridge","Memory store & Claude-memory bridge."],
+      ["audit / security-scan","Security auditing & vuln remediation."],
+      ["dependency-check","Dependency vulnerability check."],
+      ["testgen / tdd-workflow / test-gaps","Test generation & coverage gaps."],
+      ["ruflo-docs / api-docs / doc-gen","Documentation generation."]
+    ]
+  },
+  {
+    id:"cflow", name:"claude-flow commands", color:"#e0af68",
+    desc:"Namespaced command skills (agents:, swarm:, sparc:, hive-mind:, hooks:, memory: …). Hundreds of subcommands.",
+    skills:[
+      ["agents:*","spawn, list, status, health, metrics, pool, logs, types, coordination."],
+      ["swarm:*","init, spawn, monitor, status, strategies, modes, research, dev, testing."],
+      ["coordination:*","init, orchestrate, agent-spawn, task-orchestrate, swarm-init."],
+      ["hive-mind:*","init, spawn, consensus, memory, metrics, sessions, wizard."],
+      ["sparc:*","architect, coder, tester, debugger, reviewer, orchestrator, tdd, +20 modes."],
+      ["hooks:*","pre/post-task, pre/post-edit, session-end, setup, overview."],
+      ["memory:*","memory-usage, memory-search, memory-persist, neural."],
+      ["analysis:*","bottleneck-detect, performance-report, token-usage/efficiency."],
+      ["automation:*","auto-agent, smart-spawn, self-healing, workflow-select."],
+      ["optimization:*","auto-topology, parallel-execute, topology-optimize, cache."],
+      ["monitoring:*","status, agents, real-time-view, swarm-monitor, metrics."],
+      ["training:*","neural-train, pattern-learn, model-update, specialization."],
+      ["workflows:*","workflow-create/execute/export, development, research."],
+      ["github:*","pr-manager, code-review-swarm, issue-tracker, release-swarm, repo-architect…"],
+      ["pair:*","start, session, modes, config, commands, examples."],
+      ["verify:* / truth:*","check, start — verification & truth scoring."],
+      ["stream-chain:*","pipeline, run — stream-JSON multi-agent chaining."]
+    ]
+  },
+  {
+    id:"agentdb", name:"AgentDB / ReasoningBank", color:"#f7768e",
+    desc:"Vector database, memory patterns, RL learning, adaptive reasoning.",
+    skills:[
+      ["agentdb-vector-search","Semantic vector search for RAG & similarity matching."],
+      ["agentdb-memory-patterns","Persistent memory patterns for stateful agents."],
+      ["agentdb-learning","9 reinforcement-learning algorithms (Q-Learning, Actor-Critic…)."],
+      ["agentdb-optimization","Quantization, HNSW indexing, caching, batch ops."],
+      ["agentdb-advanced","QUIC sync, multi-DB, custom metrics, hybrid search."],
+      ["reasoningbank-agentdb","ReasoningBank adaptive learning on AgentDB."],
+      ["reasoningbank-intelligence","Pattern recognition & strategy optimization."]
+    ]
+  },
+  {
+    id:"v3", name:"claude-flow v3", color:"#ff9e64",
+    desc:"v3 implementation suite — DDD architecture, security, performance, MCP, memory.",
+    skills:[
+      ["v3-ddd-architecture","Domain-Driven Design / bounded contexts / microkernel."],
+      ["v3-core-implementation","Core DDD domains, clean architecture, DI."],
+      ["v3-cli-modernization","Interactive prompts, command decomposition, hooks."],
+      ["v3-mcp-optimization","Connection pooling, load balancing, sub-100ms tools."],
+      ["v3-memory-unification","Unify 6+ memory systems into AgentDB+HNSW."],
+      ["v3-performance-optimization","Flash Attention 2.49-7.47x, search 150x+, memory −50-75%."],
+      ["v3-security-overhaul","Address CVEs, secure-by-default patterns."],
+      ["v3-integration-deep","Deep agentic-flow integration (ADR-001)."],
+      ["v3-swarm-coordination","15-agent hierarchical mesh for v3 build."]
+    ]
+  },
+  {
+    id:"design", name:"Design / UI", color:"#f7768e",
+    desc:"Front-end taste & visual-design enforcement skills.",
+    skills:[
+      ["design-taste-frontend","Senior UI/UX engineer — metric-based rules, strict component architecture."],
+      ["gpt-taste","UX/UI + advanced GSAP motion; randomized editorial layouts."],
+      ["high-end-visual-design","Agency-grade fonts/spacing/shadows; blocks cheap defaults."],
+      ["minimalist-ui","Clean editorial monochrome — no gradients/heavy shadows."],
+      ["redesign-existing-projects","Upgrade existing sites/apps to premium quality."],
+      ["full-output-enforcement","Override truncation — exhaustive complete code output."]
+    ]
+  },
+  {
+    id:"orch", name:"Orchestration / misc", color:"#73daca",
+    desc:"Top-level swarm, methodology, browser, discovery & builder skills.",
+    skills:[
+      ["swarm-orchestration","Multi-agent swarms via agentic-flow."],
+      ["swarm-advanced","Advanced swarm patterns for research/dev/test."],
+      ["sparc-methodology","SPARC: Spec→Pseudocode→Architecture→Refinement→Completion."],
+      ["stream-chain","Stream-JSON chaining for pipelines."],
+      ["hooks-automation","Automated coordination/formatting/learning hooks."],
+      ["pair-programming","AI pair programming — driver/navigator modes."],
+      ["verification-quality","Truth scoring + auto-rollback (0.95 threshold)."],
+      ["browser","Browser automation with AI-optimized snapshots."],
+      ["obscura","Web scraping / headless browser / anti-bot; WebFetch fallback."],
+      ["find-skills","Discover & install new agent skills."],
+      ["skill-builder","Create new Claude Code skills (frontmatter, structure)."],
+      ["skill-creator","Scaffold skill directories & templates."],
+      ["flow-nexus-platform","Flow Nexus — auth, sandboxes, deploy, payments."],
+      ["flow-nexus-swarm","Cloud swarm deployment & event workflows."],
+      ["flow-nexus-neural","Train/deploy neural nets in E2B sandboxes."],
+      ["github-* (top-level)","code-review, multi-repo, project-mgmt, release-mgmt, workflow-automation."],
+      ["karpathy-guidelines","Andrej Karpathy engineering guidelines."]
+    ]
+  },
+  {
+    id:"codex", name:"Codex bridge", color:"#c0caf5",
+    desc:"Hand work to the local Codex CLI / GPT-5 runtime.",
+    skills:[
+      ["codex:rescue","Hand a stuck/large coding task to Codex via shared runtime."],
+      ["codex:setup","Check Codex CLI readiness; toggle stop-time review gate."],
+      ["codex:codex-cli-runtime","Codex CLI runtime integration."],
+      ["codex:gpt-5-4-prompting","Prompting guidance for GPT-5/4 via Codex."],
+      ["codex:codex-result-handling","Present Codex helper output back to the user."]
+    ]
+  }
+];
+
+const grid = document.getElementById('grid');
+const legend = document.getElementById('legend');
+const search = document.getElementById('search');
+const count = document.getElementById('count');
+document.getElementById('date').textContent = new Date().toISOString().slice(0,10);
+
+let total = 0;
+FAMILIES.forEach(f=>{
+  total += f.skills.length;
+  // family card
+  const card = document.createElement('section');
+  card.className='fam'; card.dataset.fam=f.id;
+  card.style.setProperty('--accent', f.color);
+  card.innerHTML = `<h2><span class="dot" style="background:${f.color}"></span>${f.name}
+      <span class="n">${f.skills.length}</span></h2><div class="desc">${f.desc}</div>`;
+  const chips = document.createElement('div'); chips.className='chips';
+  f.skills.forEach(([name,desc])=>{
+    const c=document.createElement('div'); c.className='chip';
+    c.dataset.text=(name+' '+desc).toLowerCase();
+    c.title=name+' — '+desc;            // native tooltip (never clipped)
+    c.innerHTML=`<b>${name}</b>`;
+    const show=()=>showDetail(name,f.name,f.color,desc,c);
+    c.addEventListener('mouseenter',show);
+    c.addEventListener('click',show);
+    chips.appendChild(c);
+  });
+  card.appendChild(chips);
+  grid.appendChild(card);
+  // legend toggle
+  const b=document.createElement('button'); b.dataset.fam=f.id;
+  b.innerHTML=`<span class="dot" style="background:${f.color}"></span>${f.name} <span style="color:var(--muted)">${f.skills.length}</span>`;
+  b.onclick=()=>{b.classList.toggle('off');card.classList.toggle('hidden',b.classList.contains('off'));updateCount();};
+  legend.appendChild(b);
+});
+
+const detail=document.getElementById('detail');
+let selChip=null;
+function showDetail(name,fam,color,desc,chip){
+  detail.style.setProperty('--accent',color);
+  detail.querySelector('.dname').textContent=name;
+  detail.querySelector('.dname').style.color=color;
+  detail.querySelector('.dfam').textContent='· '+fam;
+  detail.querySelector('.ddesc').textContent=desc;
+  detail.classList.add('show');
+  if(selChip)selChip.classList.remove('sel');
+  selChip=chip; chip.classList.add('sel');
+}
+function hideDetail(){detail.classList.remove('show');if(selChip)selChip.classList.remove('sel');selChip=null;}
+
+function updateCount(){
+  const vis=[...document.querySelectorAll('.chip')].filter(c=>!c.classList.contains('hidden')
+    && !c.closest('.fam').classList.contains('hidden')).length;
+  count.textContent=`${vis} / ${total} skills shown`;
+}
+search.addEventListener('input',()=>{
+  const q=search.value.trim().toLowerCase();
+  document.querySelectorAll('.fam').forEach(fam=>{
+    let any=false;
+    fam.querySelectorAll('.chip').forEach(c=>{
+      const hit=!q||c.dataset.text.includes(q);
+      c.classList.toggle('hidden',!hit); if(hit)any=true;
+    });
+    if(q) fam.classList.toggle('hidden',!any);
+    else fam.classList.toggle('hidden',
+      legend.querySelector(`button[data-fam="${fam.dataset.fam}"]`).classList.contains('off'));
+  });
+  updateCount();
+});
+updateCount();
+</script>
+</body>
+</html>

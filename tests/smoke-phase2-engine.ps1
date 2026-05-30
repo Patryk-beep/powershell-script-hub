@@ -5,6 +5,7 @@
 [CmdletBinding()]
 param(
     [string]$HubScript = (Join-Path (Split-Path -Parent $PSScriptRoot) 'Hub.ps1'),
+    [int]$Port = 8799,
     [int]$BootTimeoutSeconds = 15,
     [int]$RunTimeoutSeconds  = 20
 )
@@ -12,10 +13,24 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# --- Test isolation (ADV-002/004) -------------------------------------------------
+# Redirect TEMP + LOCALAPPDATA to a throwaway sandbox BEFORE deriving any paths, so this
+# instance: (a) reads no stale %TEMP%\hub.port hint (binds -Port deterministically even when
+# Hub.exe is closed), and (b) never reads/writes the user's real %LOCALAPPDATA%\Hub\ — so
+# interrupted-run recovery can't mark a LIVE workflow run as interrupted. Restored in finally.
+$Script:OrigTemp          = $env:TEMP
+$Script:OrigTmp           = $env:TMP
+$Script:OrigLocalAppData  = $env:LOCALAPPDATA
+$Script:Sandbox = Join-Path $Script:OrigTemp ('hub-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+[System.IO.Directory]::CreateDirectory($Script:Sandbox) | Out-Null
+$env:TEMP         = $Script:Sandbox
+$env:TMP          = $Script:Sandbox
+$env:LOCALAPPDATA = $Script:Sandbox
+
 $Script:Failures = New-Object 'System.Collections.Generic.List[string]'
 $Script:HubProc  = $null
 $Script:Fixtures = Join-Path $PSScriptRoot 'fixtures'
-$Script:HubPort  = 8765
+$Script:HubPort  = $Port
 $Script:BaseUrl  = "http://127.0.0.1:$Script:HubPort"
 $Script:CfgDir   = Join-Path $env:LOCALAPPDATA 'Hub'
 $Script:RunsDir  = Join-Path $Script:CfgDir 'workflow-runs'
@@ -37,7 +52,7 @@ function Start-HubProcess {
     Stop-Hub
     $extra = if ($ExtraArgs) { ' ' + ($ExtraArgs -join ' ') } else { '' }
     $Script:HubProc = Start-Process pwsh `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`"$extra" `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`" -SkipMutex -Port $Script:HubPort$extra" `
         -PassThru -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds($BootTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -236,6 +251,9 @@ try {
         $fakeFiles = Get-ChildItem -Path $Script:RunsDir -Filter 'run-smoke-interrupted-*.json' -ErrorAction SilentlyContinue
         foreach ($f in $fakeFiles) { Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue }
     } catch { }
+    # Restore env + remove the isolation sandbox (ADV-002/004).
+    $env:TEMP = $Script:OrigTemp; $env:TMP = $Script:OrigTmp; $env:LOCALAPPDATA = $Script:OrigLocalAppData
+    try { if ($Script:Sandbox -and (Test-Path -LiteralPath $Script:Sandbox)) { Remove-Item -LiteralPath $Script:Sandbox -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
 }
 
 Write-Host ''

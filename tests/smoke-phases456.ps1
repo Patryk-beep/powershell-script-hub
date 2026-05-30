@@ -4,16 +4,28 @@
 [CmdletBinding()]
 param(
     [string]$HubScript = (Join-Path (Split-Path -Parent $PSScriptRoot) 'Hub.ps1'),
+    [int]$Port = 8799,
     [int]$BootTimeoutSeconds = 15
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# --- Test isolation (ADV-002/004): sandbox TEMP + LOCALAPPDATA so we bind -Port deterministically
+# and never touch the user's real %LOCALAPPDATA%\Hub\. Restored in finally. ---
+$Script:OrigTemp          = $env:TEMP
+$Script:OrigTmp           = $env:TMP
+$Script:OrigLocalAppData  = $env:LOCALAPPDATA
+$Script:Sandbox = Join-Path $Script:OrigTemp ('hub-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+[System.IO.Directory]::CreateDirectory($Script:Sandbox) | Out-Null
+$env:TEMP         = $Script:Sandbox
+$env:TMP          = $Script:Sandbox
+$env:LOCALAPPDATA = $Script:Sandbox
+
 $Script:Failures = New-Object 'System.Collections.Generic.List[string]'
 $Script:HubProc  = $null
 $Script:Fixtures = Join-Path $PSScriptRoot 'fixtures'
-$Script:HubPort  = 8765
+$Script:HubPort  = $Port
 $Script:BaseUrl  = "http://127.0.0.1:$Script:HubPort"
 $Script:CfgDir   = Join-Path $env:LOCALAPPDATA 'Hub'
 $Script:CfgPath  = Join-Path $Script:CfgDir 'hub-config.json'
@@ -33,7 +45,7 @@ function Stop-Hub {
 function Start-HubProcess {
     Stop-Hub
     $Script:HubProc = Start-Process pwsh `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`"" `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$HubScript`" -ExtraScanRoots `"$Script:Fixtures`" -SkipMutex -Port $Script:HubPort" `
         -PassThru -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds($BootTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -217,6 +229,9 @@ try {
     } elseif (Test-Path $Script:CfgPath) {
         Remove-Item $Script:CfgPath -Force -ErrorAction SilentlyContinue
     }
+    # Restore env + remove the isolation sandbox (ADV-002/004).
+    $env:TEMP = $Script:OrigTemp; $env:TMP = $Script:OrigTmp; $env:LOCALAPPDATA = $Script:OrigLocalAppData
+    try { if ($Script:Sandbox -and (Test-Path -LiteralPath $Script:Sandbox)) { Remove-Item -LiteralPath $Script:Sandbox -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
 }
 
 Write-Host ''

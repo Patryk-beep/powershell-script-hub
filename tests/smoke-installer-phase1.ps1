@@ -10,12 +10,23 @@
 [CmdletBinding()]
 param(
     [string]$HubSource = (Join-Path (Split-Path -Parent $PSScriptRoot) 'Hub.ps1'),
-    [int]$Port = 8765,
+    [int]$Port = 8799,
     [int]$BootTimeoutSeconds = 12
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# --- Test isolation (ADV-002/004): sandbox TEMP + LOCALAPPDATA so we bind -Port deterministically
+# and never touch the user's real %LOCALAPPDATA%\Hub\. Restored in finally. ---
+$Script:OrigTemp          = $env:TEMP
+$Script:OrigTmp           = $env:TMP
+$Script:OrigLocalAppData  = $env:LOCALAPPDATA
+$Script:Sandbox = Join-Path $Script:OrigTemp ('hub-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+[System.IO.Directory]::CreateDirectory($Script:Sandbox) | Out-Null
+$env:TEMP         = $Script:Sandbox
+$env:TMP          = $Script:Sandbox
+$env:LOCALAPPDATA = $Script:Sandbox
 
 $Script:Failures = New-Object 'System.Collections.Generic.List[string]'
 $Script:HubProc  = $null
@@ -56,7 +67,7 @@ function Start-Hub {
     param([string[]]$ExtraArgs = @())
     Stop-Hub
     $extra = if ($ExtraArgs) { ' ' + ($ExtraArgs -join ' ') } else { '' }
-    $Script:HubProc = Start-Process pwsh -ArgumentList "-NoProfile -File `"$HubSource`"$extra" -PassThru -WindowStyle Hidden
+    $Script:HubProc = Start-Process pwsh -ArgumentList "-NoProfile -File `"$HubSource`" -SkipMutex -Port $Port$extra" -PassThru -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds($BootTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         try {
@@ -229,6 +240,9 @@ try {
 } finally {
     Stop-Hub
     Restore-UserConfig
+    # Restore env + remove the isolation sandbox (ADV-002/004).
+    $env:TEMP = $Script:OrigTemp; $env:TMP = $Script:OrigTmp; $env:LOCALAPPDATA = $Script:OrigLocalAppData
+    try { if ($Script:Sandbox -and (Test-Path -LiteralPath $Script:Sandbox)) { Remove-Item -LiteralPath $Script:Sandbox -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
 }
 
 Write-Host ''

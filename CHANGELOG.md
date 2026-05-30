@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git / history endpoints (the v1.4.13.0 binary returned 503 for `/api/workflows`).
 
 ### Fixed
+- **PS5.1 exe startup** — the Phase 1–6 modules contained PowerShell 7-only syntax
+  that never ran under the PS2EXE/PS5.1 runtime (they'd only ever been exercised
+  under pwsh 7). `Hub-History.ps1` used `??` (null-coalescing) — a hard parse error
+  under PS5.1 that silently broke dot-sourcing and prevented the exe from starting.
+  Rewritten with PS5.1-safe equivalents.
+- **Schema cache under the exe** — `Get-SchemaCache` read the cache with
+  `ConvertFrom-Json -AsHashtable` (PS6+ only); under PS5.1 it always threw, so the
+  cache was never used and every `/api/items` did a full cold AST re-scan. Now uses
+  the existing PS5-safe `ConvertFrom-JsonHashtable` converter.
 - `GET /api/history` on a fresh install (no history yet) returned bare JSON `null`
   instead of `{ entries: [], total: 0, ... }`, which could break the History tab
   for new users. It now always returns the consistent shape.

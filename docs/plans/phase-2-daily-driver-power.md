@@ -21,12 +21,37 @@ serialize the submitted `values` map — naively persisting them would write
 credentials into `presets\*.json` and `runs.jsonl` and break that promise.
 
 **Rule for this phase:** before persisting a `values` map (preset save OR history
-log), drop every field whose schema widget is `password`. On apply / re-run those
-fields come back **blank** (and stay `required`), forcing re-entry. `rawArgs` is
-opaque (may embed secrets) and is therefore **redacted from history logging** and
-**not offered as a saved preset value** — presets are a typed-mode-only feature.
-The redaction must be keyed off the live schema (`Get-ParamSchema`), not a guess,
-so a field renamed/retyped in the script can't leak on the next run.
+log), drop every field that is a secret. On apply / re-run those fields come back
+**blank** (and stay `required`), forcing re-entry. `rawArgs` is opaque (may embed
+secrets) and is therefore **redacted from history logging** and **not offered as a
+saved preset value** — presets are a typed-mode-only feature. The redaction must be
+keyed off the live schema (`Get-ParamSchema`), not a guess, so a field renamed/
+retyped in the script can't leak on the next run.
+
+> **ADV-201 (HARDEN — secret detection cannot be widget-only).** `widget = 'password'`
+> is stamped ONLY for `[securestring]`/`[pscredential]` (`Hub.ps1:924`); there is NO
+> name-based secret detection in the codebase. A plain `[string]$Password` / `$ApiKey`
+> / `$Token` gets `widget='textbox'` and would be **persisted in cleartext** — breaking
+> the "secrets never hit disk" promise for the COMMON case. `Remove-SecretValues` MUST
+> redact a field when `widget -eq 'password'` **OR** its name matches a secret heuristic:
+> `'(?i)pass(word)?|secret|token|api[-_]?key|cred(ential)?|client[-_]?secret|access[-_]?key'`.
+> Residual limitation (a non-matching plain-string secret, e.g. `[string]$Z`) is STILL
+> persisted — document this in the preset-save UI ("only password-typed and
+> conventionally-named secret fields are auto-redacted"). Recommend a `rune:sentinel`
+> pass on `Remove-SecretValues` at implementation.
+>
+> **ADV-202 (HARDEN — argv-preview must mask secrets).** The debounced `/api/argv-preview`
+> (Step 13) renders `commandLineString` in the UI and re-sends values on every keystroke.
+> For any secret field (typed or heuristic-matched), MASK the value in BOTH `argv[]` and
+> `commandLineString` in the preview render — show a `••••` / `<FieldName>` placeholder.
+> The argv *structure* (the trust point) is preserved without rendering the secret on
+> screen (shoulder-surf / screenshot / screen-share exposure).
+>
+> **ADV-205 (HARDEN — module dependency direction).** `Remove-SecretValues` is called by
+> `Write-HubHistory` (`Hub-History.ps1`) but defined in `Hub-Presets.ps1`. The rollback
+> plan removes `Hub-Presets.ps1` — which would break history logging. Either define
+> `Remove-SecretValues` in an always-present module (e.g. inline in `Hub-History.ps1` or
+> a shared helper) OR guard the call site with `if (Get-Command Remove-SecretValues -EA SilentlyContinue)`.
 
 ## Dependencies / prerequisites
 - **Phase 0 complete (SATISFIED)**: v1.5.0.0 `Hub.exe` shipped, and `Hub.ps1` already
@@ -145,9 +170,15 @@ braces grep too: `Select-String -Pattern '\?\?|-AsHashtable' Hub-Presets.ps1` mu
    Reuse `ConvertFrom-JsonHashtable` (defined in Hub-Workflows.ps1, already loaded
    first). Verify: saved JSON has no `password`-widget keys (unit assertion in test).
 3. **Redaction helper.** What: `Remove-SecretValues -Schema $schema -Values $ht` →
-   returns a clone with every field whose `widget -eq 'password'` removed. Where:
-   Hub-Presets.ps1 (also called by history). Verify: feed a schema with a password
-   field + a value; assert the key is absent from output.
+   returns a clone with every **secret** field removed, where secret = `widget -eq
+   'password'` **OR** field name matches `'(?i)pass(word)?|secret|token|api[-_]?key|
+   cred(ential)?|client[-_]?secret|access[-_]?key'` (ADV-201 — widget alone misses
+   plain `[string]$ApiKey`). Where: define in an **always-loaded** module so history
+   doesn't depend on the presets module (ADV-205) — simplest is to define it in
+   `Hub-History.ps1` (loaded regardless) and have presets call it, or guard the call
+   with `Get-Command`. Verify: feed (a) a `[securestring]$P` and (b) a `[string]$ApiKey`
+   with values; assert BOTH keys absent from output; assert a benign `[string]$Path`
+   key SURVIVES.
 4. **Routes — `Invoke-PresetsRoute` (collection).** GET `/api/presets?itemId=<id>` →
    list filtered by itemId (array JSON, use the `ConvertTo-Json -InputObject` +
    `'[]'` fallback idiom from `Invoke-WorkflowsRoute`). POST `/api/presets` →
@@ -193,9 +224,12 @@ braces grep too: `Select-String -Pattern '\?\?|-AsHashtable' Hub-Presets.ps1` mu
 10. **Frontend re-run.** What: `reRunFromHistory(entry)` in app.js — find item by
     `entry.itemId` (guard: item may no longer exist / be out of scan root → show a
     toast, abort), `selectItem`, await schema load, set `formValues = {...entry.params}`
-    (password fields stay blank), switch to catalog/run view, do **not** auto-submit.
-    Add a "Re-run" button to history rows in index.html. Where: app.js + index.html.
-    Verify (manual + UI smoke): clicking re-run lands on the run form pre-filled.
+    (secret fields stay blank), switch to catalog/run view, do **not** auto-submit.
+    Add a "Re-run" button to history rows in index.html. **(ADV-204:** for entries with
+    `rawArgsUsed:true`, `params` is empty — label/disable the row's re-run as "raw args
+    not stored" rather than opening a blank form silently.) Where: app.js + index.html.
+    Verify (manual + UI smoke): clicking re-run lands on the run form pre-filled; a
+    raw-mode row shows the can't-fully-re-run affordance.
 
 ### C. Argv preview (backend compute → REBUILD; read-only, NOT a state route)
 11. **`/api/argv-preview` endpoint.** What: POST (body `{itemId, values, rawArgs}`),
@@ -285,9 +319,11 @@ Mirror `tests/smoke-phases456.ps1` harness (Start-Hub via `pwsh -File Hub.ps1
   exact `ConvertTo-Json` empty-array bug this phase guards against would FAIL the test.
 
 - **`smoke-phase2-presets.ps1`**: POST preset → 200; GET `?itemId=` returns it;
-  saving a preset whose values include a `password` field → stored JSON has no
-  password key (read `presets\*.json` off disk and assert); POST without CSRF → 403;
-  DELETE → 200, GET list empty; item outside scan root rejected.
+  saving a preset whose values include a `[securestring]` field AND a plain
+  `[string]$ApiKey` (ADV-201) → stored JSON on disk has **neither** secret key, but a
+  benign `[string]$Path` value **survives** (read `presets\*.json` off disk and assert
+  all three); POST without CSRF → 403; DELETE → 200, GET list empty; item outside scan
+  root rejected.
 - **`smoke-phase2-argv-preview.ps1`**: POST a complete body → 200, `argv` array equals
   the array `/api/run` builds (run the fixture, compare against a known-good argv for
   `arg-echo.ps1`); a value containing a space → one argv element, quoted in
@@ -358,8 +394,10 @@ Mirror `tests/smoke-phases456.ps1` harness (Start-Hub via `pwsh -File Hub.ps1
 - [ ] `/api/presets` (GET list `?itemId=`, POST) + `/api/presets/<id>` (DELETE)
       working; POST/DELETE CSRF-gated (registered in `$Script:StateRoutes` **and**
       `Invoke-Route`); GET list exempt.
-- [ ] Saving a preset / logging history with a `password` field writes **no** secret
-      to disk (proven by a smoke test reading the file).
+- [ ] Saving a preset / logging history with a `[securestring]` field **or** a
+      conventionally-named plain-string secret (`$ApiKey`/`$Token`/…, ADV-201) writes
+      **no** secret to disk (proven by a smoke test reading the file); benign fields
+      survive. Argv-preview masks secret values in the rendered command line (ADV-202).
 - [ ] History entries carry redacted `params` + `itemName`; "Re-run" repopulates the
       form (password fields blank); guards a missing item.
 - [ ] `/api/argv-preview` returns the honest argv array, matches what `/api/run`

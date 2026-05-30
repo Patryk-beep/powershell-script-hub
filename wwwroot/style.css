@@ -2411,3 +2411,81 @@ textarea.form-input {
   .card-pin-btn { opacity: 1; transform: none; }
 }
 
+/* ───────────────────────── Phase 2: presets / argv / log viewer ───────────────────────── */
+
+/* Presets bar */
+.presets-bar { margin: 4px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.presets-save { display: flex; gap: 8px; align-items: center; }
+.presets-name { max-width: 260px; }
+.presets-error { color: var(--danger, #e8546a); font-size: .8rem; margin: 0; }
+.presets-hint { color: var(--fg-muted); font-size: .72rem; margin: 0; }
+.presets-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden;
+}
+.preset-apply {
+  padding: 4px 10px; background: transparent; border: none; color: var(--fg);
+  font-size: .8rem; cursor: pointer; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.preset-apply:hover { background: var(--surface-3); color: var(--accent); }
+.preset-del {
+  display: inline-flex; align-items: center; padding: 4px 6px; background: transparent;
+  border: none; border-left: 1px solid var(--border); color: var(--fg-muted); cursor: pointer;
+}
+.preset-del .icon { width: 12px; height: 12px; }
+.preset-del:hover { color: var(--danger, #e8546a); background: var(--surface-3); }
+
+/* "What will run" argv preview */
+.argv-preview {
+  margin: 4px 0 12px; padding: 10px 12px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.argv-head { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--fg-muted); margin-bottom: 8px; }
+.argv-head .icon { width: 14px; height: 14px; }
+.argv-flag { margin-left: auto; color: var(--warn, #d8a657); font-size: .72rem; }
+.argv-tokens { display: flex; flex-wrap: wrap; gap: 5px; }
+.argv-tok {
+  font-family: var(--font-mono); font-size: .78rem; padding: 2px 7px; border-radius: 4px;
+  background: var(--surface-3); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-all;
+}
+.argv-exe    { background: var(--accent-soft); color: var(--accent); border-color: var(--border-strong); }
+.argv-prefix { color: var(--fg-muted); opacity: .75; }
+.argv-arg    { color: var(--fg); }
+.argv-note   { margin: 8px 0 0; font-size: .72rem; color: var(--fg-muted); }
+
+/* Log toolbar additions */
+.log-filter {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--fg); padding: 3px 8px; font-size: .78rem; max-width: 160px;
+}
+.log-filter:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.log-pane.log-wrap { white-space: pre-wrap; word-break: break-word; }
+
+/* History re-run */
+.hist-action { text-align: right; }
+.hist-rerun {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--fg); font-size: .76rem; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.hist-rerun .icon { width: 12px; height: 12px; }
+.hist-rerun:hover { background: var(--surface-3); border-color: var(--accent); color: var(--accent); }
+
+/* ANSI 16-color palette (xterm-ish) — applied to ESCAPED text only (logviewer.js) */
+.ansi-bold  { font-weight: 700; }
+.ansi-fg-0  { color: #3b3b3b; }  .ansi-fg-8  { color: #6b6b6b; }
+.ansi-fg-1  { color: #e8546a; }  .ansi-fg-9  { color: #ff7a8a; }
+.ansi-fg-2  { color: #4ec588; }  .ansi-fg-10 { color: #79e6a8; }
+.ansi-fg-3  { color: #d8a657; }  .ansi-fg-11 { color: #f0c674; }
+.ansi-fg-4  { color: #6c9ef8; }  .ansi-fg-12 { color: #8fb6ff; }
+.ansi-fg-5  { color: #c178dd; }  .ansi-fg-13 { color: #d79bee; }
+.ansi-fg-6  { color: #4ec5c5; }  .ansi-fg-14 { color: #79e0e0; }
+.ansi-fg-7  { color: #c8c8c8; }  .ansi-fg-15 { color: #ffffff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hist-rerun { transition: none; }
+}
+

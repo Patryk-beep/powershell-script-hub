@@ -16,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 
 $Script:Failures = New-Object 'System.Collections.Generic.List[string]'
 $Script:OwnedProc = $null     # only set if we started Hub ourselves
+$Script:Sandbox   = $null     # only set if we started Hub ourselves (ADV-002/004 isolation)
 $Script:HubPort   = $Port
 
 function Write-Pass { param([string]$M) Write-Host ('  [OK] '   + $M) -ForegroundColor Green }
@@ -31,9 +32,18 @@ function Stop-OwnedHub {
 }
 
 function Start-HubOnAltPort {
+    # ADV-002/004: sandbox TEMP+LOCALAPPDATA so the self-started Hub has no stale hub.port
+    # hint (binds $AltPort deterministically) and never touches the user's real state.
+    # -SkipMutex lets it run even if another Hub holds the per-user mutex. The child inherits
+    # this env at launch; we restore the test process's env immediately after.
+    $origTemp = $env:TEMP; $origTmp = $env:TMP; $origLap = $env:LOCALAPPDATA
+    $Script:Sandbox = Join-Path $origTemp ('hub-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+    [System.IO.Directory]::CreateDirectory($Script:Sandbox) | Out-Null
+    $env:TEMP = $Script:Sandbox; $env:TMP = $Script:Sandbox; $env:LOCALAPPDATA = $Script:Sandbox
     $Script:OwnedProc = Start-Process pwsh `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$HubScript`" -Port $AltPort -ExtraScanRoots `"$(Join-Path $PSScriptRoot 'fixtures')`"" `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$HubScript`" -Port $AltPort -SkipMutex -ExtraScanRoots `"$(Join-Path $PSScriptRoot 'fixtures')`"" `
         -PassThru -WindowStyle Hidden
+    $env:TEMP = $origTemp; $env:TMP = $origTmp; $env:LOCALAPPDATA = $origLap
     $script:HubPort = $AltPort
     $deadline = (Get-Date).AddSeconds($BootTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -258,9 +268,12 @@ try {
     Write-Host '--- Regression: existing features ---'
     if ($apiAvailable) {
         if ($null -eq $sess) { $sess = New-HubSession }
-        $wfList = (Invoke-Api -Method GET -Path '/api/workflows').Body
-        if ($null -ne $wfList)                             { Write-Pass 'GET /api/workflows still works' }
-        else                                               { Write-Fail 'GET /api/workflows broken' }
+        # Check HTTP status, not Body: an EMPTY workflow list is valid JSON '[]', and
+        # ('[]' | ConvertFrom-Json) assigns $null (empty array emits nothing through the
+        # pipeline) — so a non-null Body check would wrongly fail on a fresh/empty Hub.
+        $wfRes = Invoke-Api -Method GET -Path '/api/workflows'
+        if ($wfRes.Status -eq 200)                         { Write-Pass 'GET /api/workflows still works' }
+        else                                               { Write-Fail "GET /api/workflows broken ($($wfRes.Status))" }
         $hist = (Invoke-Api -Method GET -Path '/api/history').Body
         if ($hist -and $null -ne $hist.entries)            { Write-Pass 'GET /api/history still works' }
         else                                               { Write-Fail 'GET /api/history broken' }
@@ -273,6 +286,10 @@ try {
 
 } finally {
     Stop-OwnedHub   # no-op if we used the existing Hub
+    if ($Script:Sandbox) {
+        Start-Sleep -Milliseconds 300
+        try { if (Test-Path -LiteralPath $Script:Sandbox) { Remove-Item -LiteralPath $Script:Sandbox -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+    }
 }
 
 Write-Host ''

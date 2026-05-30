@@ -63,7 +63,11 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 }
 
 try {
-    $Script:HubProc = Start-Process -FilePath $ExePath -PassThru
+    # Append the test fixtures so a .ps1 sample (echo.ps1, kind='ps1') is ALWAYS in the
+    # catalog for the schema check — otherwise this smoke depends on the dev's real
+    # scan-roots happening to contain a .ps1 (they may be all .exe/cloud items).
+    $fixtures = Join-Path $PSScriptRoot 'fixtures'
+    $Script:HubProc = Start-Process -FilePath $ExePath -ArgumentList "-ExtraScanRoots `"$fixtures`"" -PassThru
     Write-Step "Started Hub PID $($Script:HubProc.Id)"
     if (-not (Wait-HubReady -Port 8765 -TimeoutSeconds $BootTimeoutSeconds)) {
         $logPath = Join-Path $env:TEMP 'hub-error.log'

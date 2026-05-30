@@ -386,6 +386,13 @@ function hubApp() {
       return arr;
     },
 
+    // Phase 1: inline accessors delegating to mixin methods. Getters defined inside
+    // a spread mixin (...canvasPolishMixin()) get flattened to stale values; inline
+    // getters in this literal are preserved as accessors and stay reactive (same as
+    // filteredItems above). See cnMinimapData()/recentItemsData() in the mixins.
+    get cnMinimap()   { return this.cnMinimapData(); },
+    get recentItems() { return this.recentItemsData(); },
+
     resetFilters() {
       this.query = '';
       this.kindFilter = 'all';
@@ -618,8 +625,10 @@ function hubApp() {
           if (run.status !== 'running') {
             clearInterval(this.wfRunPolling); this.wfRunPolling = null;
             // B5: parity with catalog SSE — workflows poll, so toast on terminal transition.
+            // Engine run-level success status is 'done' (Hub-WorkflowEngine.ps1:181),
+            // terminal set = done|failed|killed. (No exitCode at run level — status is authoritative.)
             this.notifyRunDone(this.wfSelected && this.wfSelected.name, run.status);
-            this.setTitleProgress(run.status === 'success' ? 'done' : 'failed');
+            this.setTitleProgress(run.status === 'done' ? 'done' : 'failed');
           }
         } catch (e) { /* ignore poll errors */ }
       };
@@ -815,7 +824,7 @@ function hubApp() {
         this.closeStream();
         // B3/B4: single primary toast site. (ADV-102: the `end` handler is the
         // only place endStatus/exitCode are set — never toast from onerror with them.)
-        const ok = this.endStatus === 'success' || this.exitCode === 0;
+        const ok = this.exitCode === 0 || this.endStatus === 'done';   // exitCode authoritative; status token is 'done' (Hub.ps1:1586)
         this.notifyRunDone(this.selected && this.selected.name, this.endStatus, this.exitCode);
         this.setTitleProgress(ok ? 'done' : 'failed');
       });

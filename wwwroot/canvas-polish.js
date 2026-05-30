@@ -54,8 +54,11 @@ function canvasPolishMixin() {
     },
 
     // ── A5: display-only minimap ──────────────────────────────────────────────────
+    // METHOD, not a getter: object-spread (...canvasPolishMixin()) flattens getters
+    // to stale values computed with the wrong `this`. hubApp() re-exposes this as an
+    // inline accessor `get cnMinimap()` (app.js), which Alpine keeps reactive.
     // Returns null when the canvas is empty (template guards on cnNodes.length).
-    get cnMinimap() {
+    cnMinimapData() {
       const NODE_W = 220, NODE_H = 80;
       const nodes = this.cnNodes || [];
       if (!nodes.length) return null;

@@ -125,7 +125,9 @@ function hubNotifyMixin() {
     },
 
     // ── C3: resolved recents (ids → live item objects, most-recent-first) ───────
-    get recentItems() {
+    // METHOD, not a getter: spread flattens getters. hubApp() re-exposes this as an
+    // inline accessor `get recentItems()` (app.js) so Alpine keeps it reactive.
+    recentItemsData() {
       const items = this.items || [];
       return this.recentIds
         .map(id => items.find(i => i.id === id))

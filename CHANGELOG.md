@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0.0] - 2026-05-30
+
+### Added
+- **Pipeline Builder** — chain scripts into multi-step workflows. Workflow CRUD
+  with schema validation (step IDs, `scriptId`, param templates, forward-ref +
+  cycle detection, 50-step cap, atomic persistence) in `Hub-Workflows.ps1`; a
+  run state machine driven by the `Step-Jobs` pump with template substitution
+  (`{{step-sN.stdout}}` / `.stdout.all` / `.exitCode`), SSE step events
+  (step-start/step-end/end), a kill route, and interrupted-run recovery on
+  startup in `Hub-WorkflowEngine.ps1`.
+- **Visual canvas workflow editor** (`wwwroot/canvas-editor.js`) — drag-and-drop
+  node builder with bezier edges, pan/zoom around the cursor, pointer-capture
+  drags, DFS cycle detection on edge-create + save, 8px grid snap, and a
+  schema-driven side panel. Kahn topo-sort produces the ordered `steps[]`.
+- **Workflow UI** — three-tab layout (Catalog / Workflows / History), workflow
+  list + detail + run view with a step-progress indicator and kill button.
+- **Triggers** (`Hub-Triggers.ps1`) — 5-field cron scheduler (AND dom+dow) and
+  file-watch triggers via mtime polling; specs validated at create time
+  (bad cron → 422); state persisted under `trigger-states\`.
+- **Git catalogs** (`Hub-Git.ps1`) — `POST/GET /api/git-roots` (CSRF-gated,
+  https-only), shallow clone (`--depth 1`) + pull with a trust warning; clone
+  dirs join the effective scan roots.
+- **Run history** (`Hub-History.ps1`) — JSON-lines log at `history\runs.jsonl`
+  with atomic rotation at 500 entries; `GET /api/history` with
+  limit/offset/status/workflowId filters and `?format=csv` export.
+- **`-SkipMutex`** test flag on `Hub.ps1` — lets the smoke suite run beside a
+  live `Hub.exe`; the four engine/UI smoke tests now sandbox `TEMP` +
+  `LOCALAPPDATA` and bind a dedicated port so they never touch live state.
+
+### Changed
+- Rebuilt `Hub.exe` so the embedded route table serves the workflow / trigger /
+  git / history endpoints (the v1.4.13.0 binary returned 503 for `/api/workflows`).
+
+### Fixed
+- `GET /api/history` on a fresh install (no history yet) returned bare JSON `null`
+  instead of `{ entries: [], total: 0, ... }`, which could break the History tab
+  for new users. It now always returns the consistent shape.
+
 ## [1.4.13.0] - 2026-05-26
 
 ### Added
@@ -101,5 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installer URL is tag-pinned (`/v1.1.0/`) not `/main/` so a compromised `main`
   branch cannot push a malicious installer to existing users.
 
-[Unreleased]: https://github.com/Patryk-beep/powershell-script-hub/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Patryk-beep/powershell-script-hub/compare/v1.5.0.0...HEAD
+[1.5.0.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.5.0.0
+[1.4.13.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.4.13.0
 [1.1.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.1.0

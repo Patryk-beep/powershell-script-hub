@@ -21,18 +21,18 @@ A local web dashboard that auto-discovers PowerShell scripts (`.ps1`) and tools 
 ## Install
 
 ```powershell
-irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.4.13.0/install-hub.ps1 | iex
+irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.5.0.0/install-hub.ps1 | iex
 ```
 
 That one-liner is **tag-pinned** to a specific release. It will not silently
 upgrade if `main` changes. Per-user install — no admin required.
 
-If GitHub rate-limits the request (rare), pass `-Version v1.4.13.0` to skip the
+If GitHub rate-limits the request (rare), pass `-Version v1.5.0.0` to skip the
 `latest` lookup:
 
 ```powershell
-$args = @{ Version = 'v1.4.13.0' }
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.4.13.0/install-hub.ps1))) @args
+$args = @{ Version = 'v1.5.0.0' }
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.5.0.0/install-hub.ps1))) @args
 ```
 
 ### What the installer does
@@ -55,13 +55,13 @@ $args = @{ Version = 'v1.4.13.0' }
 | `-ScanRoots @('C:\a','C:\b')` | Skip the interactive prompt (useful for scripted installs). |
 | `-Autostart` | Add an `HKCU\...\Run` entry so Hub launches at sign-in. |
 | `-NoLaunch` | Install but don't open the browser. |
-| `-Version v1.4.13.0` | Pin a specific release tag (default). |
+| `-Version v1.5.0.0` | Pin a specific release tag (default). |
 | `-VerifyHash <sha256>` | Override the embedded hash check (e.g. when piping a custom build). |
 
 ## Update
 
 ```powershell
-irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.4.13.0/install-hub.ps1 | iex -Update
+irm https://raw.githubusercontent.com/Patryk-beep/powershell-script-hub/v1.5.0.0/install-hub.ps1 | iex -Update
 ```
 
 Or, if you already have the installer on disk:
@@ -101,7 +101,7 @@ Copy both to the target machine and run:
 ```
 
 The installer will skip the network fetch path if you supply `Hub.zip` next to
-itself (planned for v1.2; for now, run with `-Version v1.4.13.0` and let it
+itself (planned for v1.2; for now, run with `-Version v1.5.0.0` and let it
 download from GitHub).
 
 ## First run
@@ -159,7 +159,7 @@ Repository (for contributors):
 ### Supply chain
 The one-liner runs in your user context. The trust model:
 
-- The installer URL is **tag-pinned** (`/v1.4.13.0/`), not `/main/`. A compromised
+- The installer URL is **tag-pinned** (`/v1.5.0.0/`), not `/main/`. A compromised
   `main` branch cannot push a malicious installer to existing users — they
   would have to type out a new tag manually.
 - `Hub.zip` is verified by **SHA256** before extraction. The expected hash is

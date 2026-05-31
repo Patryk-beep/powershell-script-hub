@@ -217,7 +217,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installer URL is tag-pinned (`/v1.1.0/`) not `/main/` so a compromised `main`
   branch cannot push a malicious installer to existing users.
 
-[Unreleased]: https://github.com/Patryk-beep/powershell-script-hub/compare/v1.6.0.0...HEAD
+[Unreleased]: https://github.com/Patryk-beep/powershell-script-hub/compare/v1.7.0.0...HEAD
+[1.7.0.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.7.0.0
 [1.6.0.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.6.0.0
 [1.5.0.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.5.0.0
 [1.4.13.0]: https://github.com/Patryk-beep/powershell-script-hub/releases/tag/v1.4.13.0

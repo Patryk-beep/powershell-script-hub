@@ -78,16 +78,30 @@ function Close-RunSseSubscribers {
 function Resolve-StepParams {
     # Substitutes {{step-N.stdout.all}}, {{step-N.stdout}}, {{step-N.exitCode}} in param values.
     # Keys that resolve to empty string are dropped; Build-Argv enforces required-param presence.
-    param([hashtable]$Params, [hashtable]$StepOutputs)
+    #
+    # ADV-301 (CRITICAL): a "secret-bearing" step (one that resolved >=1 @secret: value) may
+    # echo its secret to stdout. Substituting {{step-N.stdout(.all)}} for such a step would
+    # land the secret on the DOWNSTREAM step's argv (visible via Win32_Process.CommandLine),
+    # defeating stdin injection. So for any sid present in $SecretSteps, stdout/.stdout.all
+    # refs are dropped to '' (the .exitCode ref stays — it is not sensitive).
+    param([hashtable]$Params, [hashtable]$StepOutputs, [hashtable]$SecretSteps = @{})
     if ($null -eq $Params) { return @{} }
     $out = @{}
     foreach ($key in @($Params.Keys)) {
         $val = [string]$Params[$key]
         foreach ($sid in @($StepOutputs.Keys)) {
-            $o   = $StepOutputs[$sid]
+            $o = $StepOutputs[$sid]
+            $isSecretStep = ($SecretSteps -and $SecretSteps.ContainsKey([string]$sid))
+            if ($isSecretStep) {
+                $soAll = ''
+                $so    = ''
+            } else {
+                $soAll = $o.stdoutAll
+                $so    = $o.stdout
+            }
             # Replace .stdout.all before .stdout to avoid prefix-match clobbering.
-            $val = $val -replace [regex]::Escape("{{step-$sid.stdout.all}}"), $o.stdoutAll
-            $val = $val -replace [regex]::Escape("{{step-$sid.stdout}}"),     $o.stdout
+            $val = $val -replace [regex]::Escape("{{step-$sid.stdout.all}}"), $soAll
+            $val = $val -replace [regex]::Escape("{{step-$sid.stdout}}"),     $so
             $val = $val -replace [regex]::Escape("{{step-$sid.exitCode}}"),   [string]$o.exitCode
         }
         if ($val -ne '') { $out[$key] = $val }
@@ -112,11 +126,17 @@ function Start-HubWorkflow {
         $pathMap[$step['id']] = $item
     }
 
-    $firstStep = $steps[0]
-    $firstItem = $pathMap[$firstStep['id']]
-    $schema    = Get-ParamSchema -ScriptPath $firstItem.path
-    $argv      = Build-Argv -Schema $schema -Values (Resolve-StepParams -Params $firstStep['params'] -StepOutputs @{})
-    $jobId     = Start-HubJob -ItemPath $firstItem.path -Kind $firstItem.kind -Argv $argv -ItemId $firstItem.id -WorkflowRunId $runId
+    $firstStep   = $steps[0]
+    $firstItem   = $pathMap[$firstStep['id']]
+    $schema      = Get-ParamSchema -ScriptPath $firstItem.path
+    $secretSteps = @{}
+    $vals1       = Resolve-StepParams -Params $firstStep['params'] -StepOutputs @{} -SecretSteps $secretSteps
+    # Phase 3: resolve @secret: refs for this step (stdin injection); track secret-bearing.
+    $sec1        = Resolve-RunSecrets -Schema $schema -Values $vals1
+    if (-not $sec1.ok) { throw "Step '$($firstStep['id'])' secret error: $($sec1.error)" }
+    if ($sec1.secrets.Count -gt 0) { $secretSteps[[string]$firstStep['id']] = $true }
+    $argv        = Build-Argv -Schema $schema -Values $vals1
+    $jobId       = Start-HubJob -ItemPath $firstItem.path -Kind $firstItem.kind -Argv $argv -ItemId $firstItem.id -WorkflowRunId $runId -Secrets $sec1.secrets
 
     $run = @{
         runId         = $runId
@@ -124,6 +144,7 @@ function Start-HubWorkflow {
         status        = 'running'
         currentStepId = $firstStep['id']
         stepOutputs   = @{}
+        secretSteps   = $secretSteps
         childJobIds   = New-Object 'System.Collections.Generic.List[string]'
         currentJobId  = $jobId
         pathMap       = $pathMap
@@ -150,10 +171,22 @@ function Advance-WorkflowRuns {
             $sid         = $run.currentStepId
             $stdoutLines = @($job.buffer | Where-Object { $_.stream -eq 'out' } | ForEach-Object { $_.line })
             $lastNE      = ($stdoutLines | Where-Object { $_.Trim() -ne '' } | Select-Object -Last 1)
-            $run.stepOutputs[$sid] = @{
-                stdout    = if ($lastNE) { $lastNE } else { '' }
-                stdoutAll = ($stdoutLines -join "`n")
-                exitCode  = $job.exitCode
+            # Hardening (rune:adversary PROCEED, 2026-05-30): a secret-bearing step may echo its
+            # own secret to stdout. This capture site is the ONLY place step stdout is written to
+            # the run object, which Save-WorkflowRun persists to workflow-runs/*.json. So for a
+            # secret-bearing step, store NO captured stdout (exitCode retained — routing needs it,
+            # ADV-H2). The echoed secret can still appear LIVE in the in-memory child job buffer
+            # (transient, swept after TTL), but never AT REST (ADV-H1). Full-stdout redaction, not
+            # substring matching (substring matching is bypassable via encoding/splitting).
+            $isSecretStep = ($run.ContainsKey('secretSteps') -and $run.secretSteps -and $run.secretSteps.ContainsKey([string]$sid))
+            if ($isSecretStep) {
+                $run.stepOutputs[$sid] = @{ stdout = ''; stdoutAll = ''; stdoutRedacted = $true; exitCode = $job.exitCode }
+            } else {
+                $run.stepOutputs[$sid] = @{
+                    stdout    = if ($lastNE) { $lastNE } else { '' }
+                    stdoutAll = ($stdoutLines -join "`n")
+                    exitCode  = $job.exitCode
+                }
             }
             Send-RunSseFrame -Run $run -EventName 'step-end' -Data @{
                 stepId = $sid; exitCode = $job.exitCode; status = $job.status
@@ -191,8 +224,18 @@ function Advance-WorkflowRuns {
             }
 
             $schema2 = Get-ParamSchema -ScriptPath $nextItem.path
-            $argv2   = Build-Argv -Schema $schema2 -Values (Resolve-StepParams -Params $nextStep['params'] -StepOutputs $run.stepOutputs)
-            $jobId2  = Start-HubJob -ItemPath $nextItem.path -Kind $nextItem.kind -Argv $argv2 -ItemId $nextItem.id -WorkflowRunId $runId
+            if (-not $run.ContainsKey('secretSteps') -or $null -eq $run.secretSteps) { $run.secretSteps = @{} }
+            # ADV-301: pass secret-bearing set so an upstream secret-bearing step's stdout
+            # refs are dropped before they can reach this step's argv.
+            $vals2   = Resolve-StepParams -Params $nextStep['params'] -StepOutputs $run.stepOutputs -SecretSteps $run.secretSteps
+            $sec2    = Resolve-RunSecrets -Schema $schema2 -Values $vals2
+            if (-not $sec2.ok) {
+                $run.status = 'failed'; $run.endedAt = (Get-Date).ToString('o')
+                Save-WorkflowRun -Run $run; Close-RunSseSubscribers -Run $run; continue
+            }
+            if ($sec2.secrets.Count -gt 0) { $run.secretSteps[[string]$target] = $true }
+            $argv2   = Build-Argv -Schema $schema2 -Values $vals2
+            $jobId2  = Start-HubJob -ItemPath $nextItem.path -Kind $nextItem.kind -Argv $argv2 -ItemId $nextItem.id -WorkflowRunId $runId -Secrets $sec2.secrets
             $run.currentStepId = $target
             $run.currentJobId  = $jobId2
             [void]$run.childJobIds.Add($jobId2)

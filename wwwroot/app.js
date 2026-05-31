@@ -9,6 +9,7 @@ function hubApp() {
     ...hubNotifyMixin(),
     ...presetsMixin(),
     ...logViewerMixin(),
+    ...secretsMixin(),
     // ── Catalog state ───────────────────────────────────────────────
     items: [],
     warnings: [],
@@ -427,6 +428,8 @@ function hubApp() {
       // Phase 2: load presets for this item + compute the initial argv preview.
       this.refreshPresets();
       this.queueArgvPreview();
+      // Phase 3: load vault secret names so password fields can offer the "Use secret" dropdown.
+      this.refreshSecrets();
     },
 
     seedDefaults() {
@@ -510,6 +513,7 @@ function hubApp() {
       this.$watch && this.$watch('activeTab', (tab) => {
         if (tab === 'workflows') this.refreshWorkflows();
         if (tab === 'history')   this.refreshHistory();
+        if (tab === 'secrets')   this.refreshSecrets();
       });
     },
 

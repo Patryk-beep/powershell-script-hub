@@ -13,6 +13,7 @@
   <script src="hub-notify.js" defer></script>
   <script src="presets.js" defer></script>
   <script src="logviewer.js" defer></script>
+  <script src="secrets.js" defer></script>
   <script src="app.js" defer></script>
   <script src="vendor/alpine.min.js" defer></script>
 </head>
@@ -90,6 +91,7 @@
     <div class="tab-nav" role="tablist">
       <button type="button" class="tab-btn" :class="{ active: activeTab === 'catalog' }" @click="switchTab('catalog')" role="tab" :aria-selected="activeTab === 'catalog'">Catalog</button>
       <button type="button" class="tab-btn" :class="{ active: activeTab === 'workflows' }" @click="switchTab('workflows')" role="tab" :aria-selected="activeTab === 'workflows'">Workflows</button>
+      <button type="button" class="tab-btn" :class="{ active: activeTab === 'secrets' }" @click="switchTab('secrets')" role="tab" :aria-selected="activeTab === 'secrets'">Secrets</button>
       <button type="button" class="tab-btn" :class="{ active: activeTab === 'history' }" @click="switchTab('history')" role="tab" :aria-selected="activeTab === 'history'">History</button>
     </div>
 
@@ -401,12 +403,35 @@
                 </template>
 
                 <template x-if="field.widget === 'password'">
-                  <input type="password" class="form-input"
-                         x-model="formValues[field.name]"
-                         :required="field.required"
-                         :minlength="field.minlength || null"
-                         :maxlength="field.maxlength || null"
-                         autocomplete="new-password" spellcheck="false">
+                  <div class="form-secret-wrap">
+                    <!-- Literal password entry (when no vault secret is bound) -->
+                    <template x-if="!isSecretRef(formValues[field.name])">
+                      <input type="password" class="form-input"
+                             x-model="formValues[field.name]"
+                             :required="field.required"
+                             :minlength="field.minlength || null"
+                             :maxlength="field.maxlength || null"
+                             autocomplete="new-password" spellcheck="false">
+                    </template>
+                    <!-- Bound to a vault secret: name shown, value never displayed/sent -->
+                    <template x-if="isSecretRef(formValues[field.name])">
+                      <div class="form-secret-bound">
+                        <svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>
+                        <span class="form-secret-name" x-text="secretRefName(formValues[field.name])"></span>
+                        <span class="badge">vault secret</span>
+                        <button type="button" class="btn-mini" @click="clearSecretField(field.name)">Clear</button>
+                      </div>
+                    </template>
+                    <div class="form-secret-bind" x-show="secrets.length">
+                      <select class="form-input form-secret-select"
+                              @change="bindSecretToField(field.name, $event.target.value); $event.target.value=''">
+                        <option value="">Use a vault secret…</option>
+                        <template x-for="s in secrets" :key="s.name">
+                          <option :value="s.name" x-text="s.name + ' (' + s.kind + ')'"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </div>
                 </template>
 
                 <template x-if="field.widget === 'datetime-local'">
@@ -466,6 +491,7 @@
                 <strong>Raw mode</strong> &mdash;
                 <span x-text="schema.reason || (schema.kind === 'exe' ? 'compiled executable (no AST introspection)' : 'no typed schema available')"></span>.
                 Type arguments exactly as on the command line.
+                <em>Vault secrets are not resolved in raw mode &mdash; an <code>@secret:name</code> token is passed literally.</em>
               </span>
             </p>
             <div class="form-field span-full">
@@ -604,10 +630,15 @@
           <div>
             <div class="wf-toolbar">
               <span class="wf-toolbar-title">Workflows</span>
+              <button type="button" class="btn-ghost" @click="triggerImportPicker()" title="Import a .hubflow file">
+                <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
+                <span>Import</span>
+              </button>
               <button type="button" class="btn-primary" @click="wfNewForm()">
                 <svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg>
                 <span>New Workflow</span>
               </button>
+              <input type="file" id="hubflow-import-input" accept=".hubflow,application/json" style="display:none" @change="onImportFilePicked($event)">
             </div>
             <template x-if="wfLoading"><p class="empty">Loading…</p></template>
             <template x-if="!wfLoading && workflows.length === 0">
@@ -625,6 +656,10 @@
                     <span class="badge" x-text="(wf.steps || []).length + ' step' + ((wf.steps || []).length === 1 ? '' : 's')"></span>
                     <span class="badge" x-show="wf.trigger && wf.trigger.type !== 'manual'" x-text="wf.trigger && wf.trigger.type"></span>
                   </div>
+                  <button type="button" class="btn-mini wf-card-export" @click.stop="exportWorkflow(wf.id)" title="Export as .hubflow">
+                    <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
+                    <span>Export</span>
+                  </button>
                 </div>
               </template>
             </div>
@@ -921,6 +956,68 @@
       </div>
     </template>
 
+    <!-- ── Secrets tab ──────────────────────────────────────────────── -->
+    <template x-if="activeTab === 'secrets'">
+      <div class="secrets-panel">
+        <div class="wf-toolbar">
+          <span class="wf-toolbar-title">Secrets Vault</span>
+        </div>
+        <p class="form-help span-full">
+          Values are encrypted at rest (DPAPI, current Windows user) and are
+          <strong>write-only</strong> &mdash; once saved a value is never shown again and never
+          leaves your machine. Bind a secret to a password field on a script's run form, or to a
+          workflow step, using its name.
+        </p>
+
+        <!-- Add secret -->
+        <form class="secrets-add" @submit.prevent="saveSecret()">
+          <div class="secrets-add-row">
+            <input type="text" class="form-input" x-model="secretForm.name" placeholder="Secret name (e.g. prod-api-key)" maxlength="64" autocomplete="off" spellcheck="false">
+            <select class="form-input secrets-kind" x-model="secretForm.kind">
+              <option value="password">password (SecureString)</option>
+              <option value="credential">credential (PSCredential)</option>
+            </select>
+          </div>
+          <div class="secrets-add-row">
+            <input type="text" class="form-input" x-show="secretForm.kind === 'credential'" x-model="secretForm.username" placeholder="Username" autocomplete="off" spellcheck="false">
+            <input type="password" class="form-input" x-model="secretForm.value" placeholder="Value (write-only)" autocomplete="new-password" spellcheck="false">
+            <button type="submit" class="btn-primary" :disabled="secretBusy">
+              <svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>
+              <span x-text="secretBusy ? 'Saving…' : 'Add Secret'"></span>
+            </button>
+          </div>
+          <p class="banner banner-error" x-show="secretError" x-text="secretError"></p>
+        </form>
+
+        <!-- Secret list (metadata only) -->
+        <template x-if="secrets.length === 0">
+          <div class="empty">
+            <svg class="icon-xl"><use href="#i-lock"/></svg>
+            <p class="empty-title">No secrets yet</p>
+            <p class="empty-detail">Add a secret above, then bind it to a password field by name.</p>
+          </div>
+        </template>
+        <div class="secrets-list">
+          <template x-for="s in secrets" :key="s.name">
+            <div class="secrets-row">
+              <svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>
+              <span class="secrets-name" x-text="s.name"></span>
+              <span class="badge" x-text="s.kind"></span>
+              <span class="badge" x-show="s.username" x-text="'user: ' + s.username"></span>
+              <span class="secrets-row-spacer"></span>
+              <button type="button" class="btn-mini" @click="rotateSecret(s.name)" title="Rotate value">
+                <svg class="icon" aria-hidden="true"><use href="#i-rotate"/></svg>
+                <span>Rotate</span>
+              </button>
+              <button type="button" class="btn-mini btn-danger" @click="deleteSecret(s.name)" title="Delete secret">
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>
+              </button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
     <!-- ── History tab ──────────────────────────────────────────────── -->
     <template x-if="activeTab === 'history'">
       <div class="hist-panel">
@@ -1035,6 +1132,63 @@
             <span x-show="!setupSaving">Save</span>
             <span x-show="setupSaving">Saving…</span>
           </button>
+        </footer>
+      </div>
+    </div>
+  </template>
+
+  <!-- Workflow import: trust warning + result (Phase 3) -->
+  <template x-if="importStage === 'confirm'">
+    <div class="modal-backdrop" @click.self="cancelImport()" role="dialog" aria-modal="true" aria-label="Import workflow">
+      <div class="modal">
+        <header class="modal-header">
+          <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+          <h2 class="modal-title">Import workflow?</h2>
+        </header>
+        <p class="modal-intro">
+          You are importing <strong x-text="importFileName"></strong>. A workflow you did not
+          create can reference scripts and vault secrets on your machine. Hub will validate it and
+          will <strong>never auto-run</strong> any referenced script. Only import files you trust.
+        </p>
+        <p class="banner banner-error" x-show="importError" x-text="importError"></p>
+        <footer class="modal-footer">
+          <button type="button" class="btn-ghost" @click="cancelImport()">Cancel</button>
+          <button type="button" class="btn-primary" @click="confirmImport()">
+            <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
+            <span>Import</span>
+          </button>
+        </footer>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="importStage === 'result' && importResult">
+    <div class="modal-backdrop" @click.self="cancelImport()" role="dialog" aria-modal="true" aria-label="Import result">
+      <div class="modal">
+        <header class="modal-header">
+          <svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>
+          <h2 class="modal-title">Workflow imported</h2>
+        </header>
+        <p class="modal-intro">
+          Imported as <strong x-text="importResult && importResult.name"></strong>.
+        </p>
+        <div class="import-flags" x-show="importResult && importResult.unresolvedScripts && importResult.unresolvedScripts.length">
+          <p class="banner banner-warn">
+            <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+            <span>Some referenced scripts are not under a scan folder. Review before running:</span>
+          </p>
+          <ul class="import-flag-list">
+            <template x-for="s in (importResult ? importResult.unresolvedScripts : [])" :key="s"><li x-text="s"></li></template>
+          </ul>
+        </div>
+        <div class="import-flags" x-show="importResult && importResult.referencedSecrets && importResult.referencedSecrets.length">
+          <p class="form-help">This workflow references these vault secrets — create them locally if missing:</p>
+          <ul class="import-flag-list">
+            <template x-for="s in (importResult ? importResult.referencedSecrets : [])" :key="s"><li x-text="s"></li></template>
+          </ul>
+        </div>
+        <footer class="modal-footer">
+          <button type="button" class="btn-primary" @click="cancelImport()">Done</button>
         </footer>
       </div>
     </div>

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0.0] - 2026-05-30
+
+### Added
+- **Secrets vault** (`Hub-Secrets.ps1`) — DPAPI-encrypted (current Windows user) secret
+  store under `%LOCALAPPDATA%\Hub\secrets\`. CSRF-gated CRUD at `/api/secrets`
+  (`GET` list, `POST` create, `PUT` rename/rotate, `DELETE`); values are **write-only**
+  — no `GET` ever returns a value. `password` (`[securestring]`) and `credential`
+  (`[pscredential]`) kinds. On-disk filename is `SHA256(name)`, not the raw name.
+- **Bind a vault secret to a password field** — a run/workflow password-widget param can
+  carry the token `@secret:<name>` instead of a literal. The browser only ever sends the
+  token; the value is resolved server-side and injected via the child's **stdin**, never
+  the command line. The run form offers a "Use a vault secret" dropdown for password
+  fields (typed mode only).
+- **Workflow export/import** (`Hub-Export.ps1`, `.hubflow` files) — export a workflow
+  (incl. its canvas) as a downloadable envelope (`GET /api/workflows/<id>/export`); import
+  with full `Test-WorkflowSchema` validation + a trust warning
+  (`POST /api/workflows/import`). Import forces a fresh id (never overwrites an existing
+  workflow), resets version, never auto-runs referenced scripts, and reports unresolved
+  scripts + referenced secret names.
+
+### Security
+- **Secrets never reach argv.** Secret-bearing runs spawn through a constant `pwsh -Command`
+  shim that reads a `{target, argv, secrets}` JSON payload from stdin and rebuilds
+  `[securestring]`/`[pscredential]`; the plaintext is provably absent from every child
+  `Win32_Process.CommandLine` (smoke-asserted). Non-secret runs are byte-for-byte unchanged.
+- **Fail-closed shim** (ADV-303) — unknown secret kind or a credential missing its username
+  throws; there is never an argv fallback. The shim ends with `exit $LASTEXITCODE` (ADV-302)
+  so secret runs report the target's real exit code.
+- **ADV-301** — in a workflow, a secret-bearing step's `{{step-N.stdout(.all)}}` references
+  are dropped to empty so an echoed secret can never land on a downstream step's argv
+  (`.exitCode` refs remain). Smoke-asserted via `Win32_Process.CommandLine`.
+- **Value size cap** (ADV-304) — secret values over 64 KB are rejected (413); imports over
+  256 KB are rejected (413).
+- **Export scrub** — export rejects (422) if a literal value somehow sits in a password
+  param; only `@secret:<name>` tokens are ever written to a `.hubflow`.
+- DPAPI uses `CurrentUser` scope (no other local user can decrypt); `%LOCALAPPDATA%` is
+  non-roaming. Secret values never appear in `runs.jsonl` or `hub-error.log` (smoke-asserted).
+- **Secret-bearing workflow step output is not retained** (hardening; `rune:adversary` PROCEED).
+  If a workflow step consumes a vault secret, its captured stdout is **redacted** in the
+  persisted `workflow-runs/*.json` record (`stdoutRedacted:true`; `exitCode` retained for
+  routing) — so a script that echoes its own secret cannot leave the plaintext at rest. The
+  echoed value may still appear transiently in the in-memory child job buffer (swept after the
+  job TTL); it is never written at rest, and Hub's own injection path never echoes the value.
+
 ## [1.6.0.0] - 2026-05-30
 
 ### Added

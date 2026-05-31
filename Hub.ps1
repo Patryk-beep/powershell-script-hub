@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$Script:Version          = '1.6.0.0'
+$Script:Version          = '1.7.0.0'
 $Script:Port             = if ($Port -gt 0) { $Port } else { 8765 }
 $Script:Listener         = $null
 $Script:ListenerHealthy  = $true
@@ -56,7 +56,10 @@ $Script:StateRoutes      = @(
     '/api/workflow-runs/.+?/kill',
     '/api/git-roots',
     '/api/presets',
-    '/api/presets/.+?'
+    '/api/presets/.+?',
+    '/api/secrets',
+    '/api/secrets/.+?',
+    '/api/workflows/import'
 )
 
 # Discovery surface: depth-1 (root + immediate subdirs). Hidden dirs (`.*`, `_*`) skipped.
@@ -117,6 +120,8 @@ if (-not (Test-Path -LiteralPath $Script:WwwRoot)) {
 . (Join-Path $Script:ScriptRoot 'Hub-Git.ps1')
 . (Join-Path $Script:ScriptRoot 'Hub-History.ps1')
 . (Join-Path $Script:ScriptRoot 'Hub-Presets.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-Secrets.ps1')
+. (Join-Path $Script:ScriptRoot 'Hub-Export.ps1')
 
 function Write-HubError {
     param($Err)
@@ -1284,6 +1289,17 @@ function Build-Argv {
         # Skip non-required empty values
         if ($missing) { continue }
 
+        # Phase 3 chokepoint: a '@secret:<name>' token must NEVER land on argv. It binds
+        # only to a password-widget field (server-side binding rule) and is injected via
+        # stdin in Start-HubJob. Both the run and workflow paths funnel through Build-Argv,
+        # so this single guard guarantees the token can't reach any command line.
+        if ("$val" -match '^@secret:') {
+            if ($f.widget -ne 'password') {
+                throw [System.ArgumentException]::new("Secret reference not allowed on non-password field: $name")
+            }
+            continue
+        }
+
         # ValidateSet server-side re-validation (ADV-004)
         if ($f.widget -eq 'dropdown' -and $f.options) {
             $opts = @($f.options) | ForEach-Object { "$_" }
@@ -1488,9 +1504,11 @@ function Start-HubJob {
         [string]$WorkflowRunId = $null,
         [hashtable]$Values = @{},      # Phase 2: ALREADY redacted by caller
         [bool]$RawArgsUsed = $false,
-        [string]$ItemName = $null
+        [string]$ItemName = $null,
+        [hashtable]$Secrets = @{}      # Phase 3: param-name -> {kind;value;username}; stdin-only
     )
 
+    $hasSecrets = ($Secrets -and $Secrets.Count -gt 0)
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $argList = New-Object 'System.Collections.Generic.List[string]'
     if ($Kind -eq 'ps1') {
@@ -1501,10 +1519,20 @@ function Start-HubJob {
         $argList.Add('-NonInteractive')
         $argList.Add('-ExecutionPolicy')
         $argList.Add('Bypass')
-        $argList.Add('-File')
-        $argList.Add($ItemPath)
-        foreach ($a in $Argv) { $argList.Add([string]$a) }
+        if ($hasSecrets) {
+            # Phase 3 secret-bearing run: the target path, the non-secret argv, AND the
+            # secret payload all travel via STDIN — the command line carries ONLY the
+            # constant shim text. The shim rebuilds [securestring]/[pscredential] and
+            # splats them into the target. Plaintext is provably absent from argv.
+            $argList.Add('-Command')
+            $argList.Add($Script:SecretRunShim)
+        } else {
+            $argList.Add('-File')
+            $argList.Add($ItemPath)
+            foreach ($a in $Argv) { $argList.Add([string]$a) }
+        }
     } else {
+        if ($hasSecrets) { throw 'secrets-require-ps1' }
         $psi.FileName = $ItemPath
         foreach ($a in $Argv) { $argList.Add([string]$a) }
     }
@@ -1527,7 +1555,22 @@ function Start-HubJob {
     # ANY throw after (1) → Kill, NO registration, rethrow.
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)
-        try { $proc.StandardInput.Close() } catch { Write-HubError $_ }
+        if ($hasSecrets) {
+            # Write {target, argv, secrets} as one JSON line, then EOF. Plaintext lives only
+            # in $secretJson for the minimal window; cleared immediately after the write.
+            $secretJson = $null
+            try {
+                $payload = @{ target = $ItemPath; argv = @($Argv); secrets = $Secrets }
+                $secretJson = $payload | ConvertTo-Json -Depth 5 -Compress
+                $proc.StandardInput.WriteLine($secretJson)
+                $proc.StandardInput.Flush()
+            } finally {
+                $secretJson = $null
+                try { $proc.StandardInput.Close() } catch { Write-HubError $_ }
+            }
+        } else {
+            try { $proc.StandardInput.Close() } catch { Write-HubError $_ }
+        }
         $job = New-JobRecord -JobId $jobId -ItemId $ItemId -Process $proc
         if ($WorkflowRunId) { $job.workflowRunId = $WorkflowRunId }
         $job.values      = $Values
@@ -1792,8 +1835,17 @@ function Invoke-RunRoute {
     $safeValues  = Remove-SecretValues -Schema $plan.schema -Values $values
     $rawArgsUsed = [bool]$rawArgs
 
+    # Phase 3: resolve @secret:<name> tokens (password-widget fields only) into a
+    # plaintext map for stdin injection. Resolved as late as possible, never logged.
+    $secResult = Resolve-RunSecrets -Schema $plan.schema -Values $values
+    if (-not $secResult.ok) {
+        Write-JsonResponse -Context $Context -Status $secResult.status -Body @{ error = $secResult.error }
+        return
+    }
+    $runSecrets = $secResult.secrets
+
     try {
-        $jobId = Start-HubJob -ItemPath $resolved -Kind $item.kind -Argv $argv -ItemId $item.id -Values $safeValues -RawArgsUsed $rawArgsUsed -ItemName $item.name
+        $jobId = Start-HubJob -ItemPath $resolved -Kind $item.kind -Argv $argv -ItemId $item.id -Values $safeValues -RawArgsUsed $rawArgsUsed -ItemName $item.name -Secrets $runSecrets
     } catch [System.ComponentModel.Win32Exception] {
         Write-HubError $_
         Write-JsonResponse -Context $Context -Status 500 -Body @{ error = 'spawn-failed'; detail = $_.Exception.Message }
@@ -2149,6 +2201,14 @@ function Invoke-Route {
         if ($path -eq '/api/workflows') {
             Invoke-WorkflowsRoute -Context $Context; return $true
         }
+        # Phase 3: literal /import and /export matchers MUST precede the generic {id}
+        # matcher below — '/api/workflows/import' would otherwise resolve as id 'import'.
+        if ($path -eq '/api/workflows/import') {
+            Invoke-WorkflowImportRoute -Context $Context; return $true
+        }
+        if ($path -match '^/api/workflows/([^/]+)/export$') {
+            Invoke-WorkflowExportRoute -Context $Context -WorkflowId $matches[1]; return $true
+        }
         if ($path -match '^/api/workflows/([^/]+)$') {
             Invoke-WorkflowByIdRoute -Context $Context -WorkflowId $matches[1]; return $true
         }
@@ -2175,6 +2235,12 @@ function Invoke-Route {
         }
         if ($path -match '^/api/presets/([^/]+)$') {
             Invoke-PresetByIdRoute -Context $Context -PresetId $matches[1]; return $true
+        }
+        if ($path -eq '/api/secrets') {
+            Invoke-SecretsRoute -Context $Context; return $true
+        }
+        if ($path -match '^/api/secrets/([^/]+)$') {
+            Invoke-SecretByNameRoute -Context $Context -Name $matches[1]; return $true
         }
         if ($path -eq '/api/argv-preview') {
             Invoke-ArgvPreviewRoute -Context $Context; return $true
@@ -2394,6 +2460,7 @@ Initialize-TriggerStates
 Initialize-GitRoots
 Initialize-History
 Initialize-Presets
+Initialize-Secrets
 
 try {
     $hubPort = Initialize-HubPort -Preferred $Script:Port

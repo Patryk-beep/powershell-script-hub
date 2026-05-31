@@ -156,6 +156,30 @@ Repository (for contributors):
 - **Path-traversal guard** — static file serving rejects anything outside `wwwroot\`.
 - **Scan-root enforcement** — `/api/run` re-validates that the resolved item path is still under a configured scan root.
 
+### Secrets vault (`Hub-Secrets.ps1`)
+- **Encrypted at rest** — secret values are encrypted with Windows DPAPI in
+  `CurrentUser` scope under `%LOCALAPPDATA%\Hub\secrets\`. Only the same Windows user can
+  decrypt them; `%LOCALAPPDATA%` is non-roaming (no OneDrive/profile sync of the blobs).
+- **Write-only over the API** — `GET /api/secrets` returns names + metadata only. No
+  endpoint ever returns a value; the single decrypt path is the server-side run resolver.
+- **Bind by reference** — a password field carries the token `@secret:<name>`. The browser
+  sends only the token; the value is resolved on the server and injected into the child via
+  **stdin**, never the command line — so it is invisible to `Win32_Process.CommandLine`,
+  process-creation auditing, and EDR. `password`→`[securestring]`, `credential`→`[pscredential]`.
+- **No persistence of values** — secret values never appear in `runs.jsonl`, `hub-error.log`,
+  or exported `.hubflow` files (which carry only `@secret:` reference tokens).
+- **Echo-back is not persisted** — Hub cannot stop *your own script* from printing a secret to
+  its stdout, but a workflow step that consumes a vault secret has its captured stdout
+  **redacted** from the persisted run record (only `exitCode` is kept). An echoed secret may
+  appear transiently in the in-memory child job buffer; it is never written at rest. Hub's
+  injection path itself never echoes the value.
+
+### Workflow export/import
+- Export produces a `.hubflow` carrying the workflow (incl. canvas) with secret *references*
+  only. Import runs full schema validation, **forces a fresh id** (cannot overwrite an
+  existing workflow), **never auto-runs** any referenced script, and surfaces a trust warning
+  plus the list of unresolved scripts / referenced secrets.
+
 ### Supply chain
 The one-liner runs in your user context. The trust model:
 

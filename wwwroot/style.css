@@ -2489,3 +2489,35 @@ textarea.form-input {
   .hist-rerun { transition: none; }
 }
 
+
+/* ── Phase 3: secrets vault + export/import ─────────────────────────────── */
+.secrets-panel { display: flex; flex-direction: column; gap: var(--space); }
+.secrets-add { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.secrets-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.secrets-add-row .form-input { flex: 1 1 180px; }
+.secrets-kind { flex: 0 0 auto; }
+.secrets-list { display: flex; flex-direction: column; gap: 6px; }
+.secrets-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.secrets-name { font-weight: 600; }
+.secrets-row-spacer { flex: 1 1 auto; }
+
+.btn-mini { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
+  font-size: 0.8em; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-surface); color: var(--fg-muted); cursor: pointer; }
+.btn-mini:hover { color: var(--fg); border-color: var(--border-strong); }
+.btn-mini.btn-danger { color: var(--danger); }
+
+.form-secret-wrap { display: flex; flex-direction: column; gap: 6px; }
+.form-secret-bound { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius-md); }
+.form-secret-name { font-weight: 600; }
+.form-secret-bind { display: flex; }
+.form-secret-select { font-size: 0.85em; }
+
+.wf-card-export { position: absolute; top: 8px; right: 8px; }
+.wf-card { position: relative; }
+
+.import-flags { margin: 8px 0; }
+.import-flag-list { margin: 4px 0 0; padding-left: 18px; font-family: var(--font-mono, monospace);
+  font-size: 0.85em; color: var(--fg-muted); word-break: break-all; }

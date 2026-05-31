@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 # --- Constants ----------------------------------------------------------------
 
 # K25 — SHA256 of asset-only Hub.zip (no installer). Patched by build-release.ps1.
-$Script:ExpectedZipHash = 'A12FBF401ABCB7A465C4D990625CF1ADE0B0008C00197E2DCC295E02E431DA58'
+$Script:ExpectedZipHash = 'AC654FFC74230E2AEBCDDA27BE1712E74BC3C39695F47677EC53378686E695B7'
 
 # K12 — config dir lives OUTSIDE install dir. -Update never touches this.
 $Script:ConfigDir       = Join-Path $env:LOCALAPPDATA 'Hub'
